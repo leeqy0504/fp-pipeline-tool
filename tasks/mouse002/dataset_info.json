@@ -1,0 +1,33 @@
+{
+    "created_at": "2026-05-28 15:41:32",
+    "output_dir": "/home/ubt2204/code/obe/cam_data/mouse002",
+    "resolution": {
+        "width": 640,
+        "height": 480
+    },
+    "frame_count": 80,
+    "camera": {
+        "width": 640,
+        "height": 480,
+        "fx": 367.245849609375,
+        "fy": 367.2167053222656,
+        "ppx": 320.2030029296875,
+        "ppy": 240.18836975097656,
+        "depth_scale": 0.001
+    },
+    "sam2_points": {
+        "points": [
+            [
+                326,
+                258
+            ]
+        ],
+        "labels": [
+            1
+        ],
+        "description": "前景=1 背景=0. 在首帧 RGB 图上采集，供 sam2mask 阶段使用"
+    },
+    "real_size": {
+        "longest_edge": 0.126
+    }
+}

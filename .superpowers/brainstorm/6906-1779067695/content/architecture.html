@@ -1,0 +1,109 @@
+<h2>算子模型开发 Pipeline — 整体架构</h2>
+<p class="subtitle">方案 1：可组合的独立 CLI 工具链，每个阶段松耦合通过标准化中间格式连接</p>
+
+<div class="section">
+<h3>Pipeline 全景</h3>
+</div>
+
+<div class="mockup">
+<div class="mockup-header">FPipe 工具链架构</div>
+<div class="mockup-body">
+
+<div style="display:flex;flex-direction:column;gap:12px;font-family:monospace;font-size:13px;">
+
+<!-- Stage 1: Collect -->
+<div style="display:flex;align-items:center;gap:12px;padding:12px;background:#1a1a2e;border-radius:6px;">
+  <div style="min-width:100px;color:#00b4d8;font-weight:bold;font-size:14px;">fpipe-collect</div>
+  <div style="color:#999;">→</div>
+  <div style="flex:1">
+    <div style="color:#ccc;">传感器采集 | 标注辅助 | 格式标准化</div>
+    <div style="color:#666;font-size:11px;margin-top:4px;">输入: 传感器/手动采集 &nbsp;→&nbsp; 输出: raw/ 目录</div>
+  </div>
+</div>
+
+<!-- Stage 2: Clean -->
+<div style="display:flex;align-items:center;gap:12px;padding:12px;background:#1a1a2e;border-radius:6px;">
+  <div style="min-width:100px;color:#00b4d8;font-weight:bold;font-size:14px;">fpipe-clean</div>
+  <div style="color:#999;">→</div>
+  <div style="flex:1">
+    <div style="color:#ccc;">深度/掩码校验 | 无效帧过滤 | 标注修正 | 数据增强</div>
+    <div style="color:#666;font-size:11px;margin-top:4px;">输入: raw/ &nbsp;→&nbsp; 输出: clean/ + metadata.json</div>
+  </div>
+</div>
+
+<!-- Stage 3: Train -->
+<div style="display:flex;align-items:center;gap:12px;padding:12px;background:#1a1a2e;border-radius:6px;">
+  <div style="min-width:100px;color:#00b4d8;font-weight:bold;font-size:14px;">fpipe-train</div>
+  <div style="color:#999;">→</div>
+  <div style="flex:1">
+    <div style="color:#ccc;">数据加载 | 配置管理 | 训练/验证 | 指标输出</div>
+    <div style="color:#666;font-size:11px;margin-top:4px;">输入: clean/ + model_config.yaml &nbsp;→&nbsp; 输出: weights/ + metrics/</div>
+  </div>
+</div>
+
+<!-- Stage 4: Deploy -->
+<div style="display:flex;align-items:center;gap:12px;padding:12px;background:#1a1a2e;border-radius:6px;">
+  <div style="min-width:100px;color:#00b4d8;font-weight:bold;font-size:14px;">fpipe-deploy</div>
+  <div style="color:#999;">→</div>
+  <div style="flex:1">
+    <div style="color:#ccc;">模型导出 ONNX/TRT | 推理引擎封装 | Benchmark</div>
+    <div style="color:#666;font-size:11px;margin-top:4px;">输入: weights/ &nbsp;→&nbsp; 输出: deploy/</div>
+  </div>
+</div>
+
+<!-- Stage 5: Serve -->
+<div style="display:flex;align-items:center;gap:12px;padding:12px;background:#1a1a2e;border-radius:6px;">
+  <div style="min-width:100px;color:#00b4d8;font-weight:bold;font-size:14px;">fpipe-serve</div>
+  <div style="color:#999;">→</div>
+  <div style="flex:1">
+    <div style="color:#ccc;">REST/gRPC API | 请求队列 | 健康检查 | 指标暴露</div>
+    <div style="color:#666;font-size:11px;margin-top:4px;">输入: deploy/ &nbsp;→&nbsp; 续行: 推理服务实例</div>
+  </div>
+</div>
+
+</div>
+
+</div>
+</div>
+
+<div class="section">
+<h3>标准化中间格式</h3>
+</div>
+
+<div class="mockup">
+<div class="mockup-header">fpipe 数据集目录规范 (FPipe Format)</div>
+<div class="mockup-body">
+
+<pre style="color:#ccc;font-size:12px;line-height:1.6;margin:0;">
+my_dataset/
+├── raw/                          # fpipe-collect 产出
+│   ├── scene_000/
+│   │   ├── rgb/000.png, 001.png
+│   │   ├── depth/000.png, 001.png
+│   │   ├── camera_intrinsics.json
+│   │   └── annotations.json     # (可选) GT 标注
+│   └── scene_001/...
+│
+├── clean/                        # fpipe-clean 产出
+│   ├── scene_000/
+│   │   ├── rgb/                  # 过滤后图像
+│   │   ├── depth/                # 过滤后深度
+│   │   └── annotations.json     # 修正后标注
+│   ├── scene_001/...
+│   └── metadata.json            # 数据集级元信息
+│
+├── weights/                      # fpipe-train 产出
+│   └── foundationpose/
+│       ├── best.ckpt
+│       ├── config.yaml
+│       └── metrics.json
+│
+└── deploy/                       # fpipe-deploy 产出
+    └── foundationpose/
+        ├── model.onnx
+        ├── model_config.json
+        └── benchmark.json
+</pre>
+
+</div>
+</div>

@@ -1,0 +1,6 @@
+foundationpose:
+  stages:
+    - masks
+    - hunyuangen
+    - scale
+    - package

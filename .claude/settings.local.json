@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/ubt2204/Downloads/data/bottle/**)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(conda run *)",
+      "WebFetch(domain:github.com)",
+      "Bash(npx --version)",
+      "Read(//home/ubt2204/.ssh/**)",
+      "mcp__ssh-mcp-server__list-servers",
+      "mcp__ssh-mcp-server__execute-command",
+      "Read(//home/ubt2204/code/**)",
+      "Bash(tar czf *)",
+      "mcp__ssh-mcp-server__upload",
+      "Bash(rsync *)"
+    ]
+  }
+}
