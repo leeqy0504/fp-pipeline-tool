@@ -1,0 +1,64 @@
+<h2>Web UI 页面结构</h2>
+<p class="subtitle">6 个页面覆盖：登录 → 任务管理 → 调度 → 日志 → 配置 → 上传</p>
+
+<div class="mockup">
+  <div class="mockup-header">全局布局 — 左侧导航 + 右侧内容</div>
+  <div class="mockup-body">
+    <div style="display:flex;gap:0;min-height:320px">
+      <div class="mock-sidebar" style="flex:0 0 160px;display:flex;flex-direction:column;gap:8px">
+        <div style="font-weight:bold;margin-bottom:8px">Pipeline UI</div>
+        <div style="background:#e0e7ff;padding:4px 8px;border-radius:4px">📋 任务</div>
+        <div style="padding:4px 8px;color:#666">📤 上传</div>
+        <div style="padding:4px 8px;color:#666">⚙️ 配置</div>
+        <div style="margin-top:auto;padding:4px 8px;color:#999;font-size:12px">v0.1.0</div>
+      </div>
+      <div class="mock-content" style="flex:1">
+        <h3 style="margin:0 0 12px">任务列表</h3>
+        <div class="placeholder" style="margin-bottom:8px">mouse001 &nbsp; ✅ masks ✅ hunyuangen ✅ scale ⏳ package ⬜ foundationpose</div>
+        <div class="placeholder" style="margin-bottom:8px">mouse002 &nbsp; ✅ masks ✅ hunyuangen ✅ scale ✅ package ✅ foundationpose</div>
+        <div class="placeholder">bottle001 &nbsp; ⬜ masks ⬜ hunyuangen ⬜ scale ⬜ package ⬜ foundationpose</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">页面清单</h3>
+
+<div class="cards">
+  <div class="card" data-choice="ok" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>1. 登录页</h3>
+      <p>输入全局密码，session cookie 维持登录。无注册、无用户管理。</p>
+    </div>
+  </div>
+  <div class="card" data-choice="ok" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>2. 任务面板（首页）</h3>
+      <p>列出所有 task，每个显示 5 阶段状态指示灯。点击进入任务详情。新建任务按钮。</p>
+    </div>
+  </div>
+  <div class="card" data-choice="ok" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>3. 任务详情 / Pipeline 调度</h3>
+      <p>选中一个 task，显示 5 阶段进度条 + 实时日志终端 + 启动/重跑/停止按钮。每个 stage 可单独触发。</p>
+    </div>
+  </div>
+  <div class="card" data-choice="ok" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>4. 上传页</h3>
+      <p>拖拽/选择本地文件夹上传到服务器 tasks 目录。显示上传进度。上传完自动识别为可运行 task。</p>
+    </div>
+  </div>
+  <div class="card" data-choice="ok" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>5. 配置编辑器</h3>
+      <p>在线编辑 config YAML。语法高亮 + 格式校验。保存后下次 run 生效。列出 configs/ 下所有配置文件。</p>
+    </div>
+  </div>
+  <div class="card" data-choice="ok" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>6. 历史日志</h3>
+      <p>查看已完成任务的每次运行日志。按 task 和时间筛选。日志回放（类似 CI/CD log viewer）。</p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline UI — Precision Terminal</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-deep: #07070c;
+  --bg-panel: #0d0d16;
+  --bg-card: #11111d;
+  --bg-input: #151523;
+  --border: #1e1e33;
+  --border-active: #2a2a45;
+  --text-primary: #e4e4ec;
+  --text-secondary: #8888a0;
+  --text-muted: #5a5a72;
+  --accent: #00d4aa;
+  --accent-glow: rgba(0, 212, 170, 0.2);
+  --amber: #f0a030;
+  --amber-glow: rgba(240, 160, 48, 0.2);
+  --red: #ff4d5a;
+  --red-glow: rgba(255, 77, 90, 0.15);
+  --blue: #5b9bd5;
+  --blue-glow: rgba(91, 155, 213, 0.15);
+  --purple: #a78bfa;
+  --stage-masks: #5b9bd5;
+  --stage-hunyuan: #a78bfa;
+  --stage-scale: #f0a030;
+  --stage-package: #00d4aa;
+  --stage-fp: #ff4d5a;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --font-mono: 'DM Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+  --font-sans: 'DM Sans', -apple-system, sans-serif;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+}
+
+/* Subtle noise overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: 0.015;
+  pointer-events: none;
+  z-index: 9999;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+/* ===== SIDEBAR ===== */
+.sidebar {
+  width: 200px;
+  min-height: 100vh;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.sidebar-brand {
+  padding: 20px 18px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-brand .logo {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.sidebar-brand .version {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-sans);
+}
+
+.nav-item:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: var(--bg-card);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--border-active);
+}
+
+.nav-icon {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.nav-badge {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
+.sidebar-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.status-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 6px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ===== MAIN CONTENT ===== */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Top bar */
+.topbar {
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-panel);
+}
+
+.topbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.topbar-server {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 10px;
+  background: var(--bg-input);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+/* Content area */
+.content {
+  flex: 1;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ===== PAGE: TASK LIST ===== */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.page-title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.page-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 4px;
+}
+
+/* Buttons */
+.btn {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.btn:hover {
+  border-color: var(--border-active);
+  background: var(--bg-input);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: #00e8bb;
+  border-color: #00e8bb;
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+
+.btn-danger {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.btn-danger:hover {
+  background: var(--red-glow);
+}
+
+.btn-sm {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+/* Task cards */
+.task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 12px;
+}
+
+.task-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.task-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px;
+  height: 100%;
+  background: var(--border);
+  transition: background 0.2s ease;
+}
+
+.task-card:hover {
+  border-color: var(--border-active);
+  background: var(--bg-input);
+}
+
+.task-card:hover::before {
+  background: var(--accent);
+}
+
+.task-card.running::before {
+  background: var(--amber);
+  animation: pulse 1.5s infinite;
+}
+
+.task-card.done::before {
+  background: var(--accent);
+}
+
+.task-card.failed::before {
+  background: var(--red);
+}
+
+.task-name {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 10px;
+  color: var(--text-primary);
+}
+
+/* Stage pipeline row */
+.stage-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.stage-node {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.stage-node.done { background: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
+.stage-node.running { background: var(--amber); box-shadow: 0 0 8px var(--amber-glow); animation: pulse 1s infinite; }
+.stage-node.pending { background: var(--border); }
+.stage-node.failed { background: var(--red); box-shadow: 0 0 6px var(--red-glow); }
+
+.stage-connector {
+  width: 18px; height: 1px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.stage-connector.flow {
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+.stage-labels {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.task-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ===== PAGE: TASK DETAIL ===== */
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.detail-header .back {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  transition: color 0.15s;
+}
+
+.detail-header .back:hover { color: var(--accent); }
+
+/* Stage progress bar */
+.stage-progress {
+  display: flex;
+  gap: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 4px;
+}
+
+.stage-block {
+  flex: 1;
+  padding: 16px 12px;
+  text-align: center;
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: all 0.15s ease;
+  position: relative;
+  border: none;
+  background: none;
+  font-family: var(--font-sans);
+  color: var(--text-secondary);
+}
+
+.stage-block:hover {
+  background: var(--bg-input);
+}
+
+.stage-block.done {
+  color: var(--text-primary);
+}
+
+.stage-block.done .stage-icon {
+  background: var(--accent);
+  color: #000;
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.stage-block.running {
+  color: var(--amber);
+}
+
+.stage-block.running .stage-icon {
+  background: var(--amber);
+  color: #000;
+  box-shadow: 0 0 16px var(--amber-glow);
+  animation: pulse 1.2s infinite;
+}
+
+.stage-block.failed {
+  color: var(--red);
+}
+
+.stage-block.failed .stage-icon {
+  background: var(--red);
+  color: #fff;
+}
+
+.stage-icon {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--bg-input);
+  border: 2px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin-bottom: 6px;
+  transition: all 0.2s ease;
+}
+
+.stage-name {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stage-duration {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Log terminal */
+.terminal {
+  background: #050510;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.terminal-header {
+  padding: 8px 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.terminal-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.terminal-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+}
+
+.terminal-dot:nth-child(1) { background: var(--red); }
+.terminal-dot:nth-child(2) { background: var(--amber); }
+.terminal-dot:nth-child(3) { background: var(--accent); }
+
+.terminal-body {
+  padding: 14px;
+  max-height: 360px;
+  overflow-y: auto;
+  color: #c0c0cc;
+}
+
+.log-line {
+  padding: 1px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-line .dim { color: var(--text-muted); }
+.log-line .green { color: var(--accent); }
+.log-line .amber { color: var(--amber); }
+.log-line .red { color: var(--red); }
+.log-line .blue { color: var(--blue); }
+.log-line .purple { color: var(--purple); }
+
+.log-prompt {
+  color: var(--accent);
+  user-select: none;
+  margin-right: 8px;
+}
+
+/* Blinking cursor at end of log */
+.log-cursor {
+  display: inline-block;
+  width: 8px; height: 15px;
+  background: var(--accent);
+  animation: blink 0.8s infinite;
+  vertical-align: text-bottom;
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Action bar */
+.action-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ===== PAGE: UPLOAD ===== */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: 60px 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--bg-card);
+}
+
+.upload-zone:hover, .upload-zone.dragover {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.upload-zone .icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+
+.upload-zone h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.upload-zone p {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ===== PAGE: CONFIG EDITOR ===== */
+.editor-layout {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+}
+
+.config-list {
+  width: 220px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px;
+  flex-shrink: 0;
+}
+
+.config-list-item {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: all 0.12s ease;
+}
+
+.config-list-item:hover { background: var(--bg-input); color: var(--text-primary); }
+.config-list-item.active { color: var(--accent); background: var(--accent-glow); }
+
+.editor-pane {
+  flex: 1;
+  background: #050510;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor-toolbar {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  background: var(--bg-panel);
+}
+
+.editor-filename {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.editor-textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 16px;
+  resize: none;
+  outline: none;
+  tab-size: 2;
+}
+
+.editor-textarea::selection {
+  background: var(--accent-glow);
+}
+
+/* ===== PAGE: HISTORY LOGS ===== */
+.history-filter {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.filter-select {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.filter-select:focus {
+  border-color: var(--accent);
+}
+
+.log-entry {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.15s ease;
+}
+
+.log-entry:hover {
+  border-color: var(--border-active);
+  background: var(--bg-input);
+}
+
+.log-entry-task {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.log-entry-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.log-stage-tag {
+  font-size: 9px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--border);
+}
+
+.log-stage-tag.pass { border-color: var(--accent); color: var(--accent); }
+.log-stage-tag.fail { border-color: var(--red); color: var(--red); }
+
+/* ===== LOGIN PAGE ===== */
+.login-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  width: 100%;
+  background: var(--bg-deep);
+}
+
+.login-box {
+  width: 380px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 36px;
+  text-align: center;
+}
+
+.login-box .logo {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  margin-bottom: 20px;
+}
+
+.login-box h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.login-box .hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+.login-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  outline: none;
+  text-align: center;
+  letter-spacing: 0.1em;
+}
+
+.login-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.login-error {
+  font-size: 11px;
+  color: var(--red);
+  margin-top: 10px;
+  font-family: var(--font-mono);
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 768px) {
+  .sidebar { width: 56px; }
+  .sidebar-brand .logo { font-size: 0; }
+  .sidebar-brand .logo::first-letter { font-size: 16px; }
+  .nav-item span:not(.nav-icon) { display: none; }
+  .task-grid { grid-template-columns: 1fr; }
+  .editor-layout { flex-direction: column; }
+  .config-list { width: 100%; display: flex; overflow-x: auto; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-active); }
+</style>
+</head>
+<body>
+
+<!-- ===== SIDEBAR ===== -->
+<nav class="sidebar">
+  <div class="sidebar-brand">
+    <div class="logo">Pipeline UI</div>
+    <div class="version">v0.1.0 &mdash; FoundationPose</div>
+  </div>
+  <div class="sidebar-nav">
+    <a class="nav-item active" href="#tasks">
+      <span class="nav-icon">▤</span> 任务
+      <span class="nav-badge">3</span>
+    </a>
+    <a class="nav-item" href="#upload">
+      <span class="nav-icon">↑</span> 上传
+    </a>
+    <a class="nav-item" href="#config">
+      <span class="nav-icon">⚙</span> 配置
+    </a>
+    <a class="nav-item" href="#history">
+      <span class="nav-icon">◷</span> 历史
+    </a>
+  </div>
+  <div class="sidebar-footer">
+    <span class="status-dot"></span> server:180.127
+  </div>
+</nav>
+
+<!-- ===== MAIN ===== -->
+<div class="main">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="topbar-title">任务列表</div>
+    <div class="topbar-actions">
+      <span class="topbar-server">host: 180.127.11.166</span>
+      <button class="btn btn-primary">+ 新建任务</button>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+
+    <!-- TASK CARDS -->
+    <div class="task-grid">
+
+      <!-- Card 1: Running -->
+      <div class="task-card running">
+        <div class="task-name">mouse003</div>
+        <div class="stage-row">
+          <span class="stage-node done"></span><span class="stage-connector flow"></span>
+          <span class="stage-node done"></span><span class="stage-connector flow"></span>
+          <span class="stage-node done"></span><span class="stage-connector flow"></span>
+          <span class="stage-node running"></span><span class="stage-connector"></span>
+          <span class="stage-node pending"></span>
+        </div>
+        <div class="stage-labels">
+          <span style="color:var(--stage-masks)">masks</span>
+          <span style="color:var(--stage-hunyuan)">hunyuan</span>
+          <span style="color:var(--stage-scale)">scale</span>
+          <span style="color:var(--stage-package)">package</span>
+          <span style="color:var(--stage-fp)">foundationpose</span>
+        </div>
+        <div class="task-meta">
+          <span>⏳ package 运行中 &middot; 6m 12s</span>
+          <span>06-02 14:22</span>
+        </div>
+      </div>
+
+      <!-- Card 2: Done -->
+      <div class="task-card done">
+        <div class="task-name">mouse002</div>
+        <div class="stage-row">
+          <span class="stage-node done"></span><span class="stage-connector flow"></span>
+          <span class="stage-node done"></span><span class="stage-connector flow"></span>
+          <span class="stage-node done"></span><span class="stage-connector flow"></span>
+          <span class="stage-node done"></span><span class="stage-connector flow"></span>
+          <span class="stage-node done"></span>
+        </div>
+        <div class="stage-labels">
+          <span style="color:var(--stage-masks)">masks</span>
+          <span style="color:var(--stage-hunyuan)">hunyuan</span>
+          <span style="color:var(--stage-scale)">scale</span>
+          <span style="color:var(--stage-package)">package</span>
+          <span style="color:var(--stage-fp)">foundationpose</span>
+        </div>
+        <div class="task-meta">
+          <span>✅ 完成 &middot; 总耗时 23m 45s</span>
+          <span>06-01 16:50</span>
+        </div>
+      </div>
+
+      <!-- Card 3: Failed -->
+      <div class="task-card failed">
+        <div class="task-name">bottle001</div>
+        <div class="stage-row">
+          <span class="stage-node done"></span><span class="stage-connector flow"></span>
+          <span class="stage-node done"></span><span class="stage-connector flow"></span>
+          <span class="stage-node failed"></span><span class="stage-connector"></span>
+          <span class="stage-node pending"></span><span class="stage-connector"></span>
+          <span class="stage-node pending"></span>
+        </div>
+        <div class="stage-labels">
+          <span style="color:var(--stage-masks)">masks</span>
+          <span style="color:var(--stage-hunyuan)">hunyuan</span>
+          <span style="color:var(--stage-scale)">scale</span>
+          <span style="color:var(--stage-package)">package</span>
+          <span style="color:var(--stage-fp)">foundationpose</span>
+        </div>
+        <div class="task-meta">
+          <span>❌ scale 失败 &middot; OBJ parse error</span>
+          <span>06-01 11:20</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TASK DETAIL SECTION (simulated) -->
+    <div style="margin-top:32px;">
+      <div class="page-header" style="margin-bottom:20px;">
+        <div>
+          <div class="detail-header">
+            <button class="back">← 返回</button>
+            <span class="page-title">mouse003</span>
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">configs/foundationpose.yaml</span>
+          </div>
+        </div>
+        <div class="action-bar">
+          <button class="btn btn-sm">停止</button>
+          <button class="btn btn-sm btn-danger">重置</button>
+          <button class="btn btn-primary btn-sm">▶ 继续</button>
+        </div>
+      </div>
+
+      <!-- STAGE PROGRESS BAR -->
+      <div class="stage-progress">
+        <div class="stage-block done">
+          <div class="stage-icon">✓</div>
+          <div class="stage-name">masks</div>
+          <div class="stage-duration">2m 03s</div>
+        </div>
+        <div class="stage-block done">
+          <div class="stage-icon">✓</div>
+          <div class="stage-name">hunyuan</div>
+          <div class="stage-duration">8m 41s</div>
+        </div>
+        <div class="stage-block done">
+          <div class="stage-icon">✓</div>
+          <div class="stage-name">scale</div>
+          <div class="stage-duration">0m 03s</div>
+        </div>
+        <div class="stage-block running" style="border:1px solid var(--amber);border-radius:var(--radius);">
+          <div class="stage-icon">⏳</div>
+          <div class="stage-name">package</div>
+          <div class="stage-duration">6m 12s</div>
+        </div>
+        <div class="stage-block">
+          <div class="stage-icon">·</div>
+          <div class="stage-name">foundationpose</div>
+          <div class="stage-duration">--</div>
+        </div>
+      </div>
+
+      <!-- LOG TERMINAL -->
+      <div class="terminal">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <div class="terminal-dot"></div>
+            <div class="terminal-dot"></div>
+            <div class="terminal-dot"></div>
+          </div>
+          <span>stage: package &mdash; mouse003</span>
+        </div>
+        <div class="terminal-body">
+          <div class="log-line"><span class="dim">[2026-06-02 14:22:01]</span> <span class="green">stage.package</span> starting...</div>
+          <div class="log-line"><span class="dim">[2026-06-02 14:22:01]</span> <span class="blue">manifest</span> loaded: 3/5 stages complete</div>
+          <div class="log-line"><span class="dim">[2026-06-02 14:22:01]</span> input: <span class="purple">output/mouse003/scale/obj.obj</span></div>
+          <div class="log-line"><span class="dim">[2026-06-02 14:22:02]</span> copying <span class="amber">80</span> RGB frames...</div>
+          <div class="log-line"><span class="dim">[2026-06-02 14:22:03]</span> copying <span class="amber">80</span> depth frames...</div>
+          <div class="log-line"><span class="dim">[2026-06-02 14:22:03]</span> copying mask <span class="purple">00000.png</span></div>
+          <div class="log-line"><span class="dim">[2026-06-02 14:22:04]</span> copying mesh <span class="purple">scaled.obj</span></div>
+          <div class="log-line"><span class="dim">[2026-06-02 14:22:04]</span> copying <span class="blue">cam_K.txt</span>, <span class="blue">camera_params.json</span></div>
+          <div class="log-line"><span class="dim">[2026-06-02 14:22:05]</span> <span class="green">package</span> stage complete → <span class="purple">output/mouse003/package/</span></div>
+          <div class="log-line"><span class="log-prompt">$</span> <span class="log-cursor"></span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

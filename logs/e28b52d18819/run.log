@@ -1,0 +1,4 @@
+2026-06-02 18:01:03,265 [INFO ] pipeline.job.e28b52d18819: Demo job started — if you see this in browser, the chain works
+2026-06-02 18:01:03,766 [INFO ] pipeline.job.e28b52d18819: Step 2: async sleep done, executor thread next
+2026-06-02 18:01:03,766 [INFO ] pipeline.job.e28b52d18819: Running in executor thread — thread-safe logging verified
+2026-06-02 18:01:03,766 [INFO ] pipeline.job.e28b52d18819: Demo job complete — all 3 handlers worked

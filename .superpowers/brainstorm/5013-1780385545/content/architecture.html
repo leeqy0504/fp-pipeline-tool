@@ -1,0 +1,108 @@
+<h2>Web UI 后端架构 — 3 种方案</h2>
+<p class="subtitle">核心分歧：FastAPI 怎么调用 Pipeline Stage</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>方案 A：直接调用（推荐）</h3>
+      <p>FastAPI 直接 import pipeline 模块，stage.run() 跑在 asyncio 后台线程，WebSocket 推实时日志</p>
+      <div class="section">
+        <div class="mockup">
+          <div class="mockup-header">方案 A 架构</div>
+          <div class="mockup-body">
+            <div style="text-align:center;font-size:13px;line-height:2">
+              🌐 浏览器 ←HTTP/WS→ <strong>FastAPI</strong> → import pipeline.stages.* → run()<br>
+              <span style="color:#666">所有东西在一个 Python 进程里</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4>
+          <ul>
+            <li>直接调现有 pipeline 模块，零改造</li>
+            <li>manifest 断点续跑直接用</li>
+            <li>部署最简单，一个进程跑所有</li>
+            <li>WebSocket 日志直通 stage 输出</li>
+          </ul>
+        </div>
+        <div class="cons"><h4>Cons</h4>
+          <ul>
+            <li>长任务（混元 20min 轮询）卡线程</li>
+            <li>服务挂了 pipeline 也挂</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>方案 B：子进程调用</h3>
+      <p>FastAPI 保持 Web 逻辑，pipeline 通过 run.sh 子进程执行，stdout 捕获后推 WebSocket</p>
+      <div class="section">
+        <div class="mockup">
+          <div class="mockup-header">方案 B 架构</div>
+          <div class="mockup-body">
+            <div style="text-align:center;font-size:13px;line-height:2">
+              🌐 浏览器 ←HTTP/WS→ <strong>FastAPI</strong> → subprocess → ./run.sh stage masks<br>
+              <span style="color:#666">Pipeline 独立进程，Web 进程只管调度</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4>
+          <ul>
+            <li>Web 和 pipeline 进程隔离</li>
+            <li>完全兼容现有 run.sh 调用方式</li>
+          </ul>
+        </div>
+        <div class="cons"><h4>Cons</h4>
+          <ul>
+            <li>需要解析 stdout 来追踪状态</li>
+            <li>manifest 状态和进程状态要额外同步</li>
+            <li>部署多一层（PID 管理）</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>方案 C：任务队列</h3>
+      <p>加 Redis + Celery/ARQ，任务入队持久化，Worker 执行，Web 只做前端</p>
+      <div class="section">
+        <div class="mockup">
+          <div class="mockup-header">方案 C 架构</div>
+          <div class="mockup-body">
+            <div style="text-align:center;font-size:13px;line-height:2">
+              🌐 浏览器 ←HTTP/WS→ <strong>FastAPI</strong> → Redis → Celery Worker → stage.run()<br>
+              <span style="color:#666">经典任务队列，组件多但成熟</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4>
+          <ul>
+            <li>任务持久化，重启不丢</li>
+            <li>多任务排队天然支持</li>
+            <li>Worker 可独立扩缩</li>
+          </ul>
+        </div>
+        <div class="cons"><h4>Cons</h4>
+          <ul>
+            <li>多引入 Redis + Celery 两个依赖</li>
+            <li>部署复杂度翻倍</li>
+            <li>当前单用户场景用不上队列</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
