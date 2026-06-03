@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+{% block title %}{{ task_name }} — Pipeline UI{% endblock %}
+{% set page = "tasks" %}
+
+{% block head %}
+<style>
+.stage-list { margin-bottom: 20px; }
+.stage-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 12px;
+}
+.stage-row:last-child { border-bottom: none; }
+.stage-icon { font-size: 14px; flex-shrink: 0; }
+.stage-name { width: 140px; flex-shrink: 0; }
+.stage-status { width: 70px; flex-shrink: 0; }
+.stage-dur { color: var(--text-muted); font-size: 11px; }
+.job-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 0; font-family: var(--font-mono); font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-16">
+  <div>
+    <h1>{{ task_name }}</h1>
+    <p class="text-dim text-sm">Pipeline task detail</p>
+  </div>
+  <a href="/tasks" class="btn btn-secondary btn-sm">&larr; Back to Tasks</a>
+</div>
+
+{# ── Manifest section ── #}
+<div class="section" id="task-detail"
+     hx-get="/api/tasks/{{ task_name }}" hx-trigger="every 5s"
+     hx-swap="innerHTML show:none">
+
+  <h3>Stages</h3>
+  <div class="card mb-16">
+    {% if manifest and manifest.stages %}
+    <div class="stage-list">
+      {% for sname in ["masks", "hunyuangen", "scale", "package", "foundationpose"] %}
+        {% set sdata = manifest.stages.get(sname) %}
+        <div class="stage-row">
+          {% if sdata %}
+            {% if sdata.status == 'done' %}
+              <span class="stage-icon text-accent">&#x2713;</span>
+              <span class="stage-name">{{ sname }}</span>
+              <span class="badge badge-completed">DONE</span>
+              <span class="stage-dur">{{ "%.1fs"|format(sdata.duration_s) if sdata.duration_s else '' }}</span>
+            {% elif sdata.status == 'failed' %}
+              <span class="stage-icon text-red">&#x2717;</span>
+              <span class="stage-name">{{ sname }}</span>
+              <span class="badge badge-failed">FAILED</span>
+            {% else %}
+              <span class="stage-icon text-dim">&#x25CB;</span>
+              <span class="stage-name">{{ sname }}</span>
+              <span class="badge badge-pending">{{ sdata.status }}</span>
+            {% endif %}
+          {% else %}
+            <span class="stage-icon text-muted">&#x25CB;</span>
+            <span class="stage-name">{{ sname }}</span>
+            <span class="badge badge-idle">PENDING</span>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted text-sm" style="padding:12px">No manifest data. Run the pipeline to create one.</p>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Actions ── #}
+<div class="section" x-data="taskActions('{{ task_name }}', '{{ running_job_id or '' }}')">
+  <h3>Actions</h3>
+  <div class="card">
+    <div class="btn-group mb-12">
+      <button class="btn btn-primary"
+              @click="runJob()"
+              :disabled="running || submitting">
+        <span x-show="!submitting">Run Pipeline</span>
+        <span x-show="submitting">Submitting...</span>
+      </button>
+      <button class="btn btn-danger"
+              @click="stopJob()"
+              :disabled="!running || submitting"
+              x-show="running">
+        Stop Job
+      </button>
+      <button class="btn btn-secondary"
+              @click="resetTask()"
+              :disabled="running || submitting">
+        Reset Manifest
+      </button>
+    </div>
+
+    <div x-show="error" class="alert alert-error" x-text="error"></div>
+    <div x-show="success" class="alert alert-success" x-text="success"></div>
+
+    <div x-show="currentJobId" class="text-sm text-muted" style="font-family:var(--font-mono)">
+      Job: <span x-text="currentJobId" class="text-accent"></span>
+      <span x-show="jobStatus" x-text="' — ' + jobStatus"
+            :class="'badge badge-' + (jobStatus === 'running' ? 'running' : jobStatus === 'failed' ? 'failed' : 'completed')"></span>
+    </div>
+
+    {# ── Preset selector ── #}
+    <div class="form-group mt-8" style="max-width:240px">
+      <label>Preset</label>
+      <select class="select" x-model="preset">
+        <option value="foundationpose">foundationpose</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+{# ── Job history ── #}
+<div class="section" id="job-history"
+     hx-get="/api/history" hx-trigger="every 5s"
+     hx-swap="innerHTML">
+  <h3>Recent Jobs</h3>
+  {% if jobs %}
+  <div class="card">
+    {% for j in jobs %}
+      {% if j.task_name == task_name %}
+      <div class="job-row">
+        <span class="mono text-accent" style="font-size:11px">{{ j.job_id[:10] }}</span>
+        <span class="badge badge-{{ j.status }}">{{ j.status }}</span>
+        <span class="text-muted" style="font-size:11px">{{ j.preset }}</span>
+        {% if j.end_time and j.start_time %}
+        <span class="text-muted" style="font-size:11px;margin-left:auto">{{ "%.1fs"|format(j.end_time - j.start_time) }}</span>
+        {% endif %}
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-muted text-sm">No jobs yet.</p>
+  {% endif %}
+</div>
+
+{# ── WebSocket log terminal ── #}
+<div class="section">
+  <h3>Live Log</h3>
+  <div class="card" x-data="logTerminal()" x-init="init()">
+    <div class="terminal-header">
+      <span class="terminal-status" :class="wsState" x-text="wsLabel"></span>
+    </div>
+    <div class="terminal" id="logOutput" x-ref="output">
+      <div class="log-system">Connect to a running job to see live logs.</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function taskActions(taskName, initialRunningJobId) {
+  return {
+    preset: 'foundationpose',
+    running: !!initialRunningJobId,
+    submitting: false,
+    currentJobId: initialRunningJobId || '',
+    jobStatus: initialRunningJobId ? 'running' : '',
+    error: '',
+    success: '',
+
+    async runJob() {
+      this.submitting = true; this.error = ''; this.success = '';
+      try {
+        const r = await fetch(`/api/tasks/${taskName}/run`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({preset: this.preset})
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Submit failed');
+        this.currentJobId = d.job_id;
+        this.running = true;
+        this.jobStatus = 'running';
+        this.success = `Job ${d.job_id} started`;
+        // Connect log terminal
+        document.dispatchEvent(new CustomEvent('log:connect', {detail: {jobId: d.job_id}}));
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.submitting = false;
+      }
+    },
+
+    async stopJob() {
+      if (!this.currentJobId) return;
+      this.submitting = true; this.error = '';
+      try {
+        const r = await fetch(`/api/jobs/${this.currentJobId}/stop`, {method: 'POST'});
+        if (!r.ok) throw new Error((await r.json()).detail || 'Stop failed');
+        this.running = false;
+        this.jobStatus = 'stopped';
+        this.success = 'Job stopped';
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.submitting = false;
+      }
+    },
+
+    async resetTask() {
+      if (!confirm('Reset manifest for "' + taskName + '"?\n\nThis ONLY deletes the manifest.json status file.\nOutput data, source files, and job history are NOT affected.')) return;
+      this.submitting = true; this.error = '';
+      try {
+        const r = await fetch(`/api/tasks/${taskName}/reset`, {method: 'POST'});
+        if (!r.ok) throw new Error((await r.json()).detail || 'Reset failed');
+        this.success = 'Manifest deleted';
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.submitting = false;
+      }
+    }
+  };
+}
+
+function logTerminal() {
+  return {
+    ws: null,
+    wsState: 'idle',       // idle | connected | completed | failed | stopped | reconnecting | disconnected
+    wsLabel: 'IDLE',
+    jobId: null,
+    reconnectTimer: null,
+    reconnectAttempts: 0,
+
+    init() {
+      document.addEventListener('log:connect', (e) => {
+        this.connect(e.detail.jobId);
+      });
+    },
+
+    connect(jobId) {
+      if (this.ws) { this.ws.close(); }
+      this.jobId = jobId;
+      this.reconnectAttempts = 0;
+      this.wsState = 'connected';
+      this.wsLabel = 'CONNECTED';
+      this._doConnect();
+    },
+
+    _doConnect() {
+      if (!this.jobId) return;
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${protocol}//${location.host}/ws/jobs/${this.jobId}/logs`;
+      this.ws = new WebSocket(url);
+
+      this.ws.onopen = () => {
+        this.wsState = 'connected';
+        this.wsLabel = 'CONNECTED';
+        this.reconnectTimer = null;
+        this.reconnectAttempts = 0;
+      };
+
+      this.ws.onmessage = (e) => {
+        const text = e.data;
+        this._appendLog(text);
+        // Detect final job status from log
+        if (text.includes('[JOB COMPLETED]'))  { this.wsState = 'completed';  this.wsLabel = 'COMPLETED'; }
+        if (text.includes('[JOB FAILED]'))     { this.wsState = 'failed';     this.wsLabel = 'FAILED'; }
+        if (text.includes('[JOB STOPPED]'))    { this.wsState = 'stopped';    this.wsLabel = 'STOPPED'; }
+      };
+
+      this.ws.onclose = (e) => {
+        if (this.wsState === 'connected' || this.wsState === 'reconnecting') {
+          // Unexpected close — job may still be running
+          if (this.reconnectAttempts < 5) {
+            this.wsState = 'reconnecting';
+            this.wsLabel = `RECONNECTING (${this.reconnectAttempts + 1}/5)`;
+            this._appendLog('[connection lost, reconnecting...]', 'log-system');
+            this.reconnectTimer = setTimeout(() => {
+              this.reconnectAttempts++;
+              this._doConnect();
+            }, 3000);
+          } else {
+            this.wsState = 'disconnected';
+            this.wsLabel = 'DISCONNECTED';
+            this._appendLog('[max reconnect attempts reached]', 'log-system');
+          }
+        }
+        // If already in completed/failed/stopped state, do nothing —
+        // the terminal shows the final job status, not "disconnected".
+      };
+
+      this.ws.onerror = () => {
+        // onclose will fire next, handle there
+      };
+    },
+
+    _appendLog(text, cls) {
+      const el = this.$refs.output;
+      const line = document.createElement('div');
+      let c = '';
+      if (cls) { c = cls; }
+      else if (text.includes('[ERROR') || text.includes('[CRITICAL')) { c = 'log-error'; }
+      else if (text.includes('[WARNING')) { c = 'log-warning'; }
+      else if (text.includes('[DEBUG')) { c = 'log-debug'; }
+      else if (text.includes('[JOB COMPLETED]')) { c = 'log-system'; }
+      else if (text.includes('[JOB FAILED]'))    { c = 'log-error'; }
+      else if (text.includes('[JOB STOPPED]'))   { c = 'log-warning'; }
+      else if (text.includes('[INFO')) { c = 'log-info'; }
+      line.className = c || 'log-info';
+      line.textContent = text;
+      el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
+    }
+  };
+}
+</script>
+{% endblock %}

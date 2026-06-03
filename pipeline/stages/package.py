@@ -8,6 +8,7 @@ from pipeline.config import PipelineConfig
 from pipeline.manifest import Manifest
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
+from pipeline.stages.context import StageContext
 
 
 def _generate_cam_k_txt(fx: float, fy: float, ppx: float, ppy: float) -> str:
@@ -26,7 +27,8 @@ class PackageStage(BaseStage):
     _mask_path_override: str | None = None
     _obj_path_override: str | None = None
 
-    def run(self, config: PipelineConfig, output_dir: Path) -> Path:
+    def run(self, config: PipelineConfig, output_dir: Path,
+            context: StageContext | None = None) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         rgbd_dir = Path(config.input.rgbd_dir)

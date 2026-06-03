@@ -1,0 +1,58 @@
+{# tasks_list.html — partial rendered by /api/tasks response via HTMX client-side transform #}
+{# This file is used for SSR initial render; HTMX polling replaces innerHTML with JSON-to-HTML. #}
+
+{% if tasks|length == 0 %}
+<div class="empty-state">
+  <p class="text-muted">No tasks found.</p>
+  <p class="text-muted text-sm">Use Upload to add task data.</p>
+</div>
+{% else %}
+<div class="card-grid">
+{% for t in tasks %}
+  <div class="card task-card">
+    <a href="/tasks/{{ t.task_name }}">
+      <div class="flex justify-between items-center">
+        <h3 style="margin:0">{{ t.task_name }}</h3>
+        {% set has_manifest = t.manifest and t.manifest.stages %}
+        {% if has_manifest %}
+          {% set all_done = true %}
+          {% set has_failed = false %}
+          {% set has_running = false %}
+          {% for sname, sdata in t.manifest.stages.items() %}
+            {% if sdata.status != 'done' %}{% set all_done = false %}{% endif %}
+            {% if sdata.status == 'failed' %}{% set has_failed = true %}{% endif %}
+          {% endfor %}
+          {% set running = t.running_job_id %}
+          {% if running %}
+            <span class="badge badge-running">RUNNING</span>
+          {% elif all_done %}
+            <span class="badge badge-completed">COMPLETED</span>
+          {% elif has_failed %}
+            <span class="badge badge-failed">FAILED</span>
+          {% else %}
+            <span class="badge badge-idle">IDLE</span>
+          {% endif %}
+        {% else %}
+          <span class="badge badge-idle">NO DATA</span>
+        {% endif %}
+      </div>
+      {% if has_manifest %}
+      <div class="stage-dots">
+        {% for sname, sdata in t.manifest.stages.items() %}
+          <span class="stage-dot {{ sdata.status }}" title="{{ sname }}: {{ sdata.status }}"></span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="task-meta">
+        {% if t.latest_job_id %}
+        <span>job: {{ t.latest_job_id[:8] }}</span>
+        {% endif %}
+        {% if t.manifest and t.manifest.created_at %}
+        <span>{{ t.manifest.created_at[:10] }}</span>
+        {% endif %}
+      </div>
+    </a>
+  </div>
+{% endfor %}
+</div>
+{% endif %}

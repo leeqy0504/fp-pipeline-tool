@@ -1,12 +1,14 @@
 """Hunyuan 3D generation stage: submit/poll/download via tencentcloud SDK."""
 
 import base64
+import logging
 import time
 from pathlib import Path
 
 from pipeline.config import PipelineConfig
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
+from pipeline.stages.context import StageContext
 
 
 def _load_tencentcloud():
@@ -32,7 +34,8 @@ _MAX_WAIT = 1200       # 20 minutes timeout
 class HunyuanGenStage(BaseStage):
     name = "hunyuangen"
 
-    def run(self, config: PipelineConfig, output_dir: Path) -> Path:
+    def run(self, config: PipelineConfig, output_dir: Path,
+            context: StageContext | None = None) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         Credential, ClientProfile, HttpProfile, ai3d_client, models = _load_tencentcloud()
@@ -79,7 +82,10 @@ class HunyuanGenStage(BaseStage):
 
         resp = client.SubmitHunyuanTo3DProJob(req)
         job_id = resp.JobId
-        print(f"[hunyuangen] Job submitted: {job_id}")
+        if context:
+            context.log(logging.INFO, "Job submitted: %s", job_id)
+        else:
+            print(f"[hunyuangen] Job submitted: {job_id}")
 
         # Poll until complete
         elapsed = 0
@@ -100,7 +106,10 @@ class HunyuanGenStage(BaseStage):
                     f"Hunyuan job {job_id} failed: {query_resp.ErrorMessage}"
                 )
 
-            print(f"[hunyuangen] Polling... status={status}, elapsed={elapsed}s")
+            if context:
+                context.log(logging.INFO, "Polling... status=%s, elapsed=%ds", status, elapsed)
+            else:
+                print(f"[hunyuangen] Polling... status={status}, elapsed={elapsed}s")
 
         if elapsed >= _MAX_WAIT:
             raise StageError(f"Hunyuan job {job_id} timed out after {_MAX_WAIT}s")
@@ -127,7 +136,10 @@ class HunyuanGenStage(BaseStage):
 
         dl_path = output_dir / f"result.{dl_file.Type}"
         urllib.request.urlretrieve(dl_file.Url, str(dl_path))
-        print(f"[hunyuangen] Downloaded {dl_file.Type} ({dl_path.stat().st_size} bytes)")
+        if context:
+            context.log(logging.INFO, "Downloaded %s (%d bytes)", dl_file.Type, dl_path.stat().st_size)
+        else:
+            print(f"[hunyuangen] Downloaded {dl_file.Type} ({dl_path.stat().st_size} bytes)")
 
         # Check if result is a ZIP bundle — extract and find the OBJ
         if zipfile.is_zipfile(dl_path):
@@ -141,10 +153,16 @@ class HunyuanGenStage(BaseStage):
 
             # Rename first OBJ to obj.obj
             obj_files[0].rename(output_dir / "raw.obj")
-            print(f"[hunyuangen] Extracted OBJ + textures to {output_dir}")
+            if context:
+                context.log(logging.INFO, "Extracted OBJ + textures to %s", output_dir)
+            else:
+                print(f"[hunyuangen] Extracted OBJ + textures to {output_dir}")
         else:
             # Plain file — rename to obj.obj
             dl_path.rename(output_dir / "raw.obj")
 
-        print(f"[hunyuangen] Done: {output_dir}")
+        if context:
+            context.log(logging.INFO, "Done: %s", output_dir)
+        else:
+            print(f"[hunyuangen] Done: {output_dir}")
         return output_dir

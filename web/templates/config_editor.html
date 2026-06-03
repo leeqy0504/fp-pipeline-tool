@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Configs — Pipeline UI{% endblock %}
+{% set page = "configs" %}
+
+{% block content %}
+<h1 class="mb-8">Configs</h1>
+<p class="text-dim text-sm mb-16">Edit pipeline YAML configuration files</p>
+
+<div class="editor-layout" x-data="configEditor()" x-init="loadList()">
+  {# Left: file list #}
+  <div class="config-list" id="config-list">
+    <template x-for="c in configs" :key="c.name">
+      <button class="config-list-item"
+              :class="{ active: currentName === c.name }"
+              @click="select(c.name)"
+              x-text="c.name">
+      </button>
+    </template>
+    <div x-show="configs.length === 0" style="padding:12px;color:var(--text-muted);font-size:12px">
+      No configs found.
+    </div>
+  </div>
+
+  {# Right: editor #}
+  <div class="editor-main">
+    <div class="flex justify-between items-center">
+      <span class="text-dim text-sm" x-text="currentName || 'No file selected'" style="font-family:var(--font-mono)"></span>
+      <button class="btn btn-primary btn-sm"
+              @click="save()"
+              :disabled="!currentName || saving">
+        <span x-show="!saving">Save</span>
+        <span x-show="saving">Saving...</span>
+      </button>
+    </div>
+
+    <div x-show="error" class="alert alert-error" x-text="error" style="white-space:pre-wrap;font-family:var(--font-mono)"></div>
+    <div x-show="success" class="alert alert-success" x-text="success"></div>
+
+    <textarea class="textarea"
+              x-model="content"
+              placeholder="Select a config file to edit..."
+              spellcheck="false">
+    </textarea>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function configEditor() {
+  return {
+    configs: [],
+    currentName: '',
+    content: '',
+    saving: false,
+    error: '',
+    success: '',
+
+    async loadList() {
+      try {
+        const r = await fetch('/api/configs');
+        this.configs = await r.json();
+      } catch(e) {}
+    },
+
+    async select(name) {
+      this.currentName = name;
+      this.error = '';
+      this.success = '';
+      try {
+        const r = await fetch(`/api/configs/${name}`);
+        const d = await r.json();
+        this.content = d.content;
+      } catch(e) {
+        this.error = 'Failed to load config';
+      }
+    },
+
+    async save() {
+      if (!this.currentName) return;
+      this.saving = true;
+      this.error = '';
+      this.success = '';
+      try {
+        const r = await fetch(`/api/configs/${this.currentName}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({content: this.content})
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Save failed');
+        this.success = 'Saved';
+        setTimeout(() => this.success = '', 2000);
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.saving = false;
+      }
+    }
+  };
+}
+</script>
+{% endblock %}

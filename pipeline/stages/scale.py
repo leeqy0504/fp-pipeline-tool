@@ -6,6 +6,7 @@ from pipeline.config import PipelineConfig
 from pipeline.manifest import Manifest
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
+from pipeline.stages.context import StageContext
 
 
 def parse_obj_bounds(obj_text: str) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
@@ -57,7 +58,8 @@ class ScaleStage(BaseStage):
 
     _input_obj_path: str | None = None
 
-    def run(self, config: PipelineConfig, output_dir: Path) -> Path:
+    def run(self, config: PipelineConfig, output_dir: Path,
+            context: StageContext | None = None) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         if self._input_obj_path:

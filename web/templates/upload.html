@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Upload — Pipeline UI{% endblock %}
+{% set page = "upload" %}
+
+{% block content %}
+<h1 class="mb-8">Upload</h1>
+<p class="text-dim text-sm mb-16">Upload task data (images, depth, camera params, views)</p>
+
+<div x-data="uploadForm()">
+  <div class="card mb-16" style="max-width:640px">
+    <div class="form-group">
+      <label>Task Name</label>
+      <input type="text" class="input" x-model="taskName" placeholder="e.g. mouse003" autocomplete="off">
+    </div>
+
+    <div class="upload-zone mb-12"
+         @dragover.prevent="$el.classList.add('dragover')"
+         @dragleave.prevent="$el.classList.remove('dragover')"
+         @drop.prevent="handleDrop($event); $el.classList.remove('dragover')"
+         @click="$refs.fileInput.click()">
+      <p class="text-dim">Drop files here or click to browse</p>
+      <p class="text-muted text-sm mt-4">
+        Allowed: PNG, JPG, JSON, TXT, YAML, OBJ, PLY, STL, GLB, NPY, NPZ, CSV
+      </p>
+      <input type="file" x-ref="fileInput" multiple hidden
+             @change="handleFiles($event)">
+    </div>
+
+    <div x-show="files.length > 0" class="mb-12">
+      <div class="flex justify-between items-center mb-8">
+        <span class="text-sm text-dim" x-text="files.length + ' file(s)'"></span>
+        <button class="btn btn-secondary btn-sm" @click="clearFiles()">Clear</button>
+      </div>
+      <template x-for="(f, i) in files" :key="i">
+        <div class="flex justify-between items-center text-sm" style="padding:4px 0;font-family:var(--font-mono)">
+          <span class="truncate" style="max-width:400px" x-text="f.name"></span>
+          <span class="text-muted" x-text="formatSize(f.size)"></span>
+        </div>
+      </template>
+    </div>
+
+    <div x-show="error" class="alert alert-error" x-text="error"></div>
+    <div x-show="success" class="alert alert-success" x-text="success"></div>
+
+    <div class="flex gap-8 items-center">
+      <button class="btn btn-primary"
+              @click="upload()"
+              :disabled="uploading || !taskName || files.length === 0">
+        <span x-show="!uploading">Upload</span>
+        <span x-show="uploading">Uploading...</span>
+      </button>
+      <div x-show="uploading" class="flex-1">
+        <div class="progress-bar">
+          <div class="progress-fill" :style="'width:' + progress + '%'"></div>
+        </div>
+        <span class="text-muted text-sm" x-text="progress + '%'"></span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function uploadForm() {
+  return {
+    taskName: '',
+    files: [],
+    uploading: false,
+    progress: 0,
+    error: '',
+    success: '',
+
+    handleDrop(e) {
+      this.handleFiles({target: {files: e.dataTransfer.files}});
+    },
+
+    handleFiles(e) {
+      const allowed = ['.png','.jpg','.jpeg','.json','.txt','.yaml','.yml',
+                       '.obj','.ply','.stl','.glb','.gltf','.mtl',
+                       '.npy','.npz','.csv','.tsv'];
+      const newFiles = Array.from(e.target.files).filter(f => {
+        const ext = '.' + f.name.split('.').pop().toLowerCase();
+        return allowed.includes(ext);
+      });
+      if (newFiles.length === 0) {
+        this.error = 'No valid files selected. Check file extensions.';
+      } else {
+        this.error = '';
+      }
+      this.files = [...this.files, ...newFiles];
+      if (e.target) e.target.value = '';
+    },
+
+    clearFiles() {
+      this.files = [];
+      this.error = '';
+      this.success = '';
+    },
+
+    formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+      return (bytes/(1024*1024)).toFixed(1) + ' MB';
+    },
+
+    async upload() {
+      if (!this.taskName.trim()) { this.error = 'Task name is required'; return; }
+      if (this.files.length === 0) { this.error = 'No files selected'; return; }
+
+      this.uploading = true; this.error = ''; this.success = ''; this.progress = 0;
+
+      const form = new FormData();
+      form.append('task_name', this.taskName.trim());
+      this.files.forEach(f => form.append('files', f));
+
+      try {
+        const r = await fetch('/api/tasks/upload', {
+          method: 'POST',
+          body: form
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Upload failed');
+        this.progress = 100;
+        this.success = `${d.files.length} file(s) uploaded to "${d.task_name}" (${this.formatSize(d.total_bytes)})`;
+        this.files = [];
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.uploading = false;
+      }
+    }
+  };
+}
+</script>
+{% endblock %}

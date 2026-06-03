@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}Pipeline UI{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+{% block head %}{% endblock %}
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="sidebar-brand">PIPELINE UI</div>
+    <a href="/tasks"   class="nav-item {{ 'active' if page == 'tasks' else '' }}">Tasks</a>
+    <a href="/upload"  class="nav-item {{ 'active' if page == 'upload' else '' }}">Upload</a>
+    <a href="/configs" class="nav-item {{ 'active' if page == 'configs' else '' }}">Configs</a>
+    <a href="/history" class="nav-item {{ 'active' if page == 'history' else '' }}">History</a>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-footer">
+      <div class="system-mini" id="system-mini"
+           x-data="systemStatus()" x-init="fetchStatus()"
+           hx-get="/api/system" hx-trigger="every 5s" hx-swap="none"
+           hx-on::after-request="updateFromHtmx(event)">
+        <div class="sys-row"><span>CPU</span><span class="sys-val" x-text="fmt(cpu_percent, '%')"></span></div>
+        <div class="sys-row"><span>MEM</span><span class="sys-val" x-text="fmt(memory?.percent, '%')"></span></div>
+        <div class="sys-row"><span>DISK</span><span class="sys-val" x-text="fmt(disk?.percent, '%')"></span></div>
+        <div class="sys-gpu" x-show="gpu"><span class="sys-val ok">GPU</span></div>
+        <div class="sys-gpu" x-show="gpu === null">
+          <span class="sys-val" style="color:var(--text-muted)">No GPU detected</span>
+        </div>
+      </div>
+      <form action="/api/logout" method="post" style="padding:0 20px">
+        <button class="nav-item" style="width:100%;border:none;background:none;cursor:pointer;text-align:left;font-family:inherit;font-size:inherit">
+          Logout
+        </button>
+      </form>
+    </div>
+  </nav>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<script>
+function systemStatus() {
+  return {
+    cpu_percent: 0, memory: null, disk: null, gpu: undefined,
+    fmt(v, suffix) {
+      if (v == null) return '--';
+      return Math.round(v) + suffix;
+    },
+    cls(v, threshold) {
+      if (v == null) return '';
+      return v > threshold ? 'high' : v > threshold * 0.7 ? 'warn' : 'ok';
+    },
+    async fetchStatus() {
+      try {
+        const r = await fetch('/api/system');
+        const d = await r.json();
+        Object.assign(this, d);
+      } catch(e) {}
+    },
+    updateFromHtmx(e) {
+      try {
+        const d = JSON.parse(e.detail.xhr.responseText);
+        Object.assign(this, d);
+      } catch(_) {}
+    }
+  };
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

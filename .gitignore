@@ -33,3 +33,9 @@ manifest.json
 
 # Conda
 *.yml~
+
+# Secrets
+.env
+
+# Web UI runtime
+logs/

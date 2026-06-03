@@ -1,5 +1,6 @@
 """FoundationPose stage: run pose estimation in Docker container."""
 
+import logging
 import subprocess
 import time
 from pathlib import Path
@@ -8,13 +9,15 @@ from pipeline.config import PipelineConfig
 from pipeline.manifest import Manifest
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
+from pipeline.stages.context import StageContext
 
 
 @register_stage("foundationpose")
 class FoundationPoseStage(BaseStage):
     name = "foundationpose"
 
-    def run(self, config: PipelineConfig, output_dir: Path) -> Path:
+    def run(self, config: PipelineConfig, output_dir: Path,
+            context: StageContext | None = None) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         manifest_path = Path(config.output_dir) / config.task / "manifest.json"
@@ -49,13 +52,19 @@ class FoundationPoseStage(BaseStage):
             capture_output=True, text=True,
         )
         if not result.stdout.strip():
-            print(f"[foundationpose] Container '{container}' not running, starting...")
+            if context:
+                context.log(logging.INFO, "Container '%s' not running, starting...", container)
+            else:
+                print(f"[foundationpose] Container '{container}' not running, starting...")
             run_script = str(Path(workdir) / "docker" / "run_container.sh")
             subprocess.run(
                 ["bash", run_script],
                 cwd=workdir, check=True,
             )
-            print("[foundationpose] Waiting 10s for container to be ready...")
+            if context:
+                context.log(logging.INFO, "Waiting 10s for container to be ready...")
+            else:
+                print("[foundationpose] Waiting 10s for container to be ready...")
             time.sleep(10)
 
             verify = subprocess.run(
@@ -82,7 +91,10 @@ class FoundationPoseStage(BaseStage):
             f"--debug 2 "#{fp_config.debug}
             f"--debug_dir {output_dir_abs}"
         )
-        print(f"[foundationpose] Running inference...")
+        if context:
+            context.log(logging.INFO, "Running inference...")
+        else:
+            print("[foundationpose] Running inference...")
         result = subprocess.run(
             ["docker", "exec", container, "bash", "-c", cmd],
         )
@@ -107,5 +119,8 @@ class FoundationPoseStage(BaseStage):
                 f"{len(txt_files)} poses vs {len(rgb_files)} RGB frames"
             )
 
-        print(f"[foundationpose] Done: {len(txt_files)} poses -> {ob_in_cam}")
+        if context:
+            context.log(logging.INFO, "Done: %d poses -> %s", len(txt_files), ob_in_cam)
+        else:
+            print(f"[foundationpose] Done: {len(txt_files)} poses -> {ob_in_cam}")
         return output_dir

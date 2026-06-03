@@ -1,19 +1,22 @@
 """SAM2 mask generation stage: runs SAM2 via a running Docker container."""
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 
 from pipeline.config import PipelineConfig
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
+from pipeline.stages.context import StageContext
 
 
 @register_stage("masks")
 class Sam2MaskStage(BaseStage):
     name = "masks"
 
-    def run(self, config: PipelineConfig, output_dir: Path) -> Path:
+    def run(self, config: PipelineConfig, output_dir: Path,
+            context: StageContext | None = None) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         rgbd_dir = Path(config.input.rgbd_dir)
@@ -57,11 +60,20 @@ class Sam2MaskStage(BaseStage):
             if pts and lbls and len(pts) == len(lbls):
                 points = pts
                 labels = lbls
-                print(f"[sam2mask] Using {len(points)} point(s) from {dataset_info_path}")
+                if context:
+                    context.log(logging.INFO, "Using %d point(s) from %s", len(points), dataset_info_path)
+                else:
+                    print(f"[sam2mask] Using {len(points)} point(s) from {dataset_info_path}")
             else:
-                print(f"[sam2mask] WARNING: dataset_info.json found but sam2_points invalid, using config values")
+                if context:
+                    context.log(logging.WARNING, "dataset_info.json found but sam2_points invalid, using config values")
+                else:
+                    print("[sam2mask] WARNING: dataset_info.json found but sam2_points invalid, using config values")
         else:
-            print(f"[sam2mask] No dataset_info.json found, using config pts/labels")
+            if context:
+                context.log(logging.INFO, "No dataset_info.json found, using config pts/labels")
+            else:
+                print("[sam2mask] No dataset_info.json found, using config pts/labels")
 
         points_str = " ".join(f"{x},{y}" for x, y in points)
         labels_str = " ".join(str(l) for l in labels)

@@ -12,4 +12,23 @@ if command -v conda &> /dev/null; then
     fi
 fi
 
-PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}" python -m pipeline.cli "$@"
+CMD="${1:-}"
+shift || true
+
+case "$CMD" in
+    web)
+        # Load .env if present
+        if [ -f "${SCRIPT_DIR}/.env" ]; then
+            export $(grep -v '^#' "${SCRIPT_DIR}/.env" | xargs)
+        fi
+        if [ -z "${WEB_PASSWORD:-}" ]; then
+            echo "ERROR: WEB_PASSWORD not set. Create .env from .env.example or export it."
+            exit 1
+        fi
+        echo "Starting Pipeline Web UI on http://0.0.0.0:8000"
+        uvicorn web.app:app --host 0.0.0.0 --port "${2:-8000}"
+        ;;
+    *)
+        PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}" python -m pipeline.cli "$CMD" "$@"
+        ;;
+esac

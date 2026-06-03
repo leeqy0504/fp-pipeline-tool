@@ -2,12 +2,16 @@
 
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 from pipeline.config import PipelineConfig
 from pipeline.manifest import Manifest
 from pipeline.stages import get_stage
+
+if TYPE_CHECKING:
+    from pipeline.stages.context import StageContext
 
 
 class PipelineOrchestrator:
@@ -33,7 +37,8 @@ class PipelineOrchestrator:
     def _stage_output_dir(self, config: PipelineConfig, stage_name: str) -> str:
         return str(Path(config.output_dir) / config.task / stage_name)
 
-    def run_preset(self, config: PipelineConfig, force: bool = False):
+    def run_preset(self, config: PipelineConfig, force: bool = False,
+                   context: "StageContext | None" = None):
         stages = self.resolve_preset(config.preset)
 
         manifest_path = self._manifest_path(config)
@@ -53,7 +58,7 @@ class PipelineOrchestrator:
 
             start = time.time()
             try:
-                result_path = stage.run(config, output_dir)
+                result_path = stage.run(config, output_dir, context=context)
                 elapsed = time.time() - start
                 manifest.mark_stage_done(stage_name, str(result_path), elapsed)
                 print(f"[pipeline] {stage_name}: done ({elapsed:.1f}s)")
@@ -67,7 +72,8 @@ class PipelineOrchestrator:
 
         print(f"[pipeline] Complete. Manifest: {manifest_path}")
 
-    def run_stage(self, config: PipelineConfig, stage_name: str, force: bool = False):
+    def run_stage(self, config: PipelineConfig, stage_name: str, force: bool = False,
+                  context: "StageContext | None" = None):
         manifest_path = self._manifest_path(config)
         manifest = Manifest.load(manifest_path) if Path(manifest_path).exists() else Manifest(
             task=config.task,
@@ -84,7 +90,7 @@ class PipelineOrchestrator:
 
         start = time.time()
         try:
-            result_path = stage.run(config, output_dir)
+            result_path = stage.run(config, output_dir, context=context)
             elapsed = time.time() - start
             manifest.mark_stage_done(stage_name, str(result_path), elapsed)
             print(f"[pipeline] {stage_name}: done ({elapsed:.1f}s)")

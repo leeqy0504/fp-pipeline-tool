@@ -1,0 +1,95 @@
+{# login.html — standalone, does not extend base #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline UI — Login</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-primary: #07070c; --bg-secondary: #0d0d1a;
+    --border: #1e1e33; --text: #e4e4ec; --text-dim: #8888a0;
+    --accent: #00d4aa; --red: #ff4d5a;
+    --font-mono: 'DM Mono', monospace; --font-sans: 'DM Sans', sans-serif;
+    --radius: 4px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg-primary); color: var(--text);
+    font-family: var(--font-sans); font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh;
+  }
+  .login-card {
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 32px; width: 320px;
+  }
+  .login-card h2 {
+    text-align: center; margin-bottom: 24px;
+    font-family: var(--font-mono); font-size: 16px; color: var(--accent);
+    letter-spacing: 0.05em;
+  }
+  .input {
+    width: 100%; padding: 10px 12px; margin-bottom: 12px;
+    background: var(--bg-primary); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text);
+    font-family: var(--font-mono); font-size: 14px; outline: none;
+  }
+  .input:focus { border-color: var(--accent); }
+  .btn {
+    width: 100%; padding: 10px; background: var(--accent); color: #000;
+    border: none; border-radius: var(--radius); cursor: pointer;
+    font-weight: 600; font-family: var(--font-sans); font-size: 13px;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .error { color: var(--red); font-size: 12px; text-align: center; margin-bottom: 8px; min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="login-card" x-data="loginForm()">
+  <h2>PIPELINE UI</h2>
+  <div class="error" x-text="error"></div>
+  <form @submit.prevent="submit">
+    <input type="password" class="input" x-model="password" placeholder="Password" autofocus>
+    <button type="submit" class="btn" :disabled="loading">
+      <span x-show="!loading">Login</span>
+      <span x-show="loading">...</span>
+    </button>
+  </form>
+</div>
+
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+<script>
+function loginForm() {
+  return {
+    password: '',
+    error: '',
+    loading: false,
+    async submit() {
+      this.loading = true; this.error = '';
+      try {
+        const r = await fetch('/api/login', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({password: this.password})
+        });
+        if (r.status === 200 || r.redirected) {
+          window.location = '/tasks';
+        } else {
+          const d = await r.json();
+          this.error = d.detail || 'Wrong password';
+        }
+      } catch(e) {
+        this.error = 'Network error';
+      } finally {
+        this.loading = false;
+      }
+    }
+  };
+}
+</script>
+</body>
+</html>

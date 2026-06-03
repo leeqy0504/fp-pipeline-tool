@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Tasks — Pipeline UI{% endblock %}
+{% set page = "tasks" %}
+
+{% block head %}
+<style>
+.task-card {
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
+}
+.task-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.task-card a { color: inherit; text-decoration: none; display: block; }
+.task-meta { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 8px; }
+.task-meta span { margin-right: 12px; }
+.empty-state { text-align: center; padding: 80px 0; color: var(--text-muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-16">
+  <div>
+    <h1>Tasks</h1>
+    <p class="text-dim text-sm">Datasets and workspaces</p>
+  </div>
+  <span class="text-muted text-sm" id="poll-indicator">auto-refresh 5s</span>
+</div>
+
+<div id="task-list"
+     hx-get="/_/tasks-list"
+     hx-trigger="every 5s"
+     hx-swap="innerHTML"
+     hx-indicator="#poll-indicator">
+  {% include "tasks_list.html" %}
+</div>
+{% endblock %}

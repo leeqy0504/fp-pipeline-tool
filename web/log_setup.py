@@ -1,26 +1,23 @@
-# web/log_setup.py
 import asyncio
 import logging
 from pathlib import Path
 
 
 class WebSocketLogHandler(logging.Handler):
-    def __init__(self, ws_manager, job_id: str):
+    def __init__(self, ws_manager, job_id: str, loop: asyncio.AbstractEventLoop):
         super().__init__()
         self._ws = ws_manager
         self._job_id = job_id
+        self._loop = loop
         self.setFormatter(logging.Formatter(
             "%(asctime)s [%(levelname)-5s] %(message)s", datefmt="%H:%M:%S"))
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             msg = self.format(record)
-            loop = asyncio.get_running_loop()
-            loop.call_soon_threadsafe(
+            self._loop.call_soon_threadsafe(
                 lambda m=msg: asyncio.create_task(
                     self._ws.broadcast(self._job_id, m)))
-        except RuntimeError:
-            pass
         except Exception:
             pass
 
@@ -37,7 +34,8 @@ def create_job_logger(job_id: str, ws_manager, project_root: str) -> logging.Log
     fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)-5s] %(name)s: %(message)s"))
     logger.addHandler(fh)
 
-    wh = WebSocketLogHandler(ws_manager, job_id)
+    loop = asyncio.get_running_loop()
+    wh = WebSocketLogHandler(ws_manager, job_id, loop)
     wh.setLevel(logging.INFO)
     logger.addHandler(wh)
 

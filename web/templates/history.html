@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}History — Pipeline UI{% endblock %}
+{% set page = "history" %}
+
+{% block head %}
+<style>
+.log-collapse { max-height: 0; overflow: hidden; transition: max-height 0.2s ease; }
+.log-collapse.open { max-height: 600px; overflow-y: auto; }
+.detail-panel {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-top: 8px;
+}
+.meta-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.meta-grid .key { color: var(--text-muted); }
+.meta-grid .val { color: var(--text); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-16">
+  <div>
+    <h1>History</h1>
+    <p class="text-dim text-sm">Job execution records</p>
+  </div>
+  <span class="text-muted text-sm">auto-refresh 10s</span>
+</div>
+
+<div x-data="historyView()" x-init="load()">
+  <div class="card mb-16"
+       hx-get="/api/history" hx-trigger="every 10s" hx-swap="none"
+       hx-on::after-request="onHtmxRefresh(event)">
+    <table>
+      <thead>
+        <tr>
+          <th>Job ID</th>
+          <th>Task</th>
+          <th>Preset</th>
+          <th>Status</th>
+          <th>Time</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="j in jobs" :key="j.job_id">
+          <tr :class="{ selected: selected === j.job_id }">
+            <td class="mono" style="font-size:11px">
+              <a href="#" @click.prevent="select(j.job_id)" x-text="j.job_id.substring(0,10)"></a>
+            </td>
+            <td x-text="j.task_name"></td>
+            <td class="text-muted" x-text="j.preset" style="font-size:11px"></td>
+            <td>
+              <span class="badge" :class="'badge-' + j.status" x-text="j.status"></span>
+            </td>
+            <td class="text-muted" style="font-size:11px">
+              <span x-show="j.start_time" x-text="fmtTs(j.start_time)"></span>
+            </td>
+            <td>
+              <button class="btn btn-secondary btn-sm"
+                      @click="confirmDelete(j.job_id)"
+                      :disabled="deleting === j.job_id"
+                      x-text="deleting === j.job_id ? '...' : 'Del'">
+              </button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+    <div x-show="jobs.length === 0" style="padding:24px;text-align:center;color:var(--text-muted)">
+      No job history.
+    </div>
+  </div>
+
+  {# Detail panel #}
+  <div x-show="detail && selected" class="detail-panel" x-transition>
+    <div class="flex justify-between items-center mb-12">
+      <h2 style="margin:0">Job <span class="text-accent" x-text="selected"></span></h2>
+      <button class="btn btn-secondary btn-sm" @click="clear()">&times;</button>
+    </div>
+
+    <div class="meta-grid mb-16" x-show="detail.metadata">
+      <template x-for="(v, k) in detail.metadata" :key="k">
+        <>
+          <span class="key" x-text="k"></span>
+          <span class="val" x-text="v"></span>
+        </>
+      </template>
+    </div>
+
+    <h3>Log</h3>
+    <div class="terminal" x-show="detail.log" x-text="detail.log" style="height:400px">
+    </div>
+    <div x-show="!detail.log" class="text-muted text-sm">No log output.</div>
+  </div>
+
+  {# Delete confirmation dialog #}
+  <div class="confirm-overlay" x-show="showConfirm" @click.self="showConfirm = false">
+    <div class="confirm-box">
+      <p>Delete job <span class="text-accent mono" x-text="confirmJobId"></span>?</p>
+      <p class="text-dim text-sm mb-16">This permanently removes all logs and metadata.</p>
+      <div class="btn-group">
+        <button class="btn btn-danger" @click="doDelete()">Delete</button>
+        <button class="btn btn-secondary" @click="showConfirm = false">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function historyView() {
+  return {
+    jobs: [],
+    selected: null,
+    detail: null,
+    showConfirm: false,
+    confirmJobId: null,
+    deleting: null,
+
+    async load() {
+      try {
+        const r = await fetch('/api/history');
+        this.jobs = await r.json();
+      } catch(e) {}
+    },
+
+    onHtmxRefresh(e) {
+      try {
+        this.jobs = JSON.parse(e.detail.xhr.responseText);
+      } catch(_) {}
+    },
+
+    async select(jobId) {
+      this.selected = jobId;
+      try {
+        const r = await fetch(`/api/history/${jobId}`);
+        this.detail = await r.json();
+      } catch(e) {}
+    },
+
+    clear() {
+      this.selected = null;
+      this.detail = null;
+    },
+
+    confirmDelete(jobId) {
+      this.confirmJobId = jobId;
+      this.showConfirm = true;
+    },
+
+    async doDelete() {
+      const jobId = this.confirmJobId;
+      this.deleting = jobId;
+      this.showConfirm = false;
+      try {
+        await fetch(`/api/history/${jobId}`, {method: 'DELETE'});
+        this.jobs = this.jobs.filter(j => j.job_id !== jobId);
+        if (this.selected === jobId) this.clear();
+      } catch(e) {} finally {
+        this.deleting = null;
+      }
+    },
+
+    fmtTs(ts) {
+      if (!ts) return '';
+      return new Date(ts * 1000).toISOString().replace('T',' ').substring(0,19);
+    }
+  };
+}
+</script>
+{% endblock %}
