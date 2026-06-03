@@ -63,7 +63,7 @@ class PackageStage(BaseStage):
             scale_dir = manifest.get_output_dir("scale")
             if not scale_dir:
                 raise StageError("No scale output found in manifest")
-            obj_src = Path(scale_dir) / "obj.obj"
+            obj_src = Path(scale_dir) / "scaled.obj"
         self.check_input_path(str(obj_src), "Scaled OBJ file")
 
         # Copy and rename RGB frames
@@ -98,12 +98,16 @@ class PackageStage(BaseStage):
         out_mesh.mkdir(exist_ok=True)
         shutil.copy2(obj_src, out_mesh / "textured_simple.obj")
 
-        # Write camera files
-        cam_k = _generate_cam_k_txt(
-            cam_data["fx"], cam_data["fy"],
-            cam_data["ppx"], cam_data["ppy"],
-        )
-        (output_dir / "cam_K.txt").write_text(cam_k)
+        # Copy cam_K.txt directly from source, no reformatting
+        cam_k_src = rgbd_dir / "cam_K.txt"
+        if cam_k_src.exists():
+            shutil.copy2(cam_k_src, output_dir / "cam_K.txt")
+        else:
+            cam_k = _generate_cam_k_txt(
+                cam_data["fx"], cam_data["fy"],
+                cam_data["ppx"], cam_data["ppy"],
+            )
+            (output_dir / "cam_K.txt").write_text(cam_k)
 
         out_cam_params = {
             "width": cam_data["width"],

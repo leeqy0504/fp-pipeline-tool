@@ -24,7 +24,8 @@ def list_stages():
 
 
 # Import stage modules to trigger @register_stage decorators
-from pipeline.stages import masks    # noqa: E402,F401
-from pipeline.stages import hunyuangen  # noqa: E402,F401
-from pipeline.stages import scale       # noqa: E402,F401
-from pipeline.stages import package     # noqa: E402,F401
+from pipeline.stages import masks          # noqa: E402,F401
+from pipeline.stages import hunyuangen     # noqa: E402,F401
+from pipeline.stages import scale          # noqa: E402,F401
+from pipeline.stages import package        # noqa: E402,F401
+from pipeline.stages import foundationpose  # noqa: E402,F401

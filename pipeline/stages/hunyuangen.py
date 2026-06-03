@@ -140,11 +140,11 @@ class HunyuanGenStage(BaseStage):
                 raise StageError("ZIP extracted but no .obj file found inside")
 
             # Rename first OBJ to obj.obj
-            obj_files[0].rename(output_dir / "scale_obj.obj")
+            obj_files[0].rename(output_dir / "raw.obj")
             print(f"[hunyuangen] Extracted OBJ + textures to {output_dir}")
         else:
             # Plain file — rename to obj.obj
-            dl_path.rename(output_dir / "scale_obj.obj")
+            dl_path.rename(output_dir / "raw.obj")
 
         print(f"[hunyuangen] Done: {output_dir}")
         return output_dir

@@ -1,6 +1,35 @@
-output/
+# Python
 __pycache__/
-*.pyc
-.eggs/
+*.py[cod]
 *.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual env
+venv/
 .venv/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pipeline outputs
+output/
+
+# Task data (large binary files)
+tasks/
+
+# Manifest (runtime state, not source)
+manifest.json
+
+# pytest
+.pytest_cache/
+
+# Conda
+*.yml~

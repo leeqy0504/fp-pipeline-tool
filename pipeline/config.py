@@ -46,6 +46,13 @@ class RealSizeConfig:
 
 
 @dataclass
+class FoundationPoseConfig:
+    container: str = "foundationpose"
+    workdir: str = "/home/vipuser/FoundationPose"
+    debug: int = 0
+
+
+@dataclass
 class PipelineConfig:
     task: str
     preset: str
@@ -53,6 +60,7 @@ class PipelineConfig:
     sam2: Sam2Config
     hunyuan: HunyuanConfig
     real_size: RealSizeConfig
+    foundationpose: FoundationPoseConfig
     output_dir: str = "output/"
 
 
@@ -123,6 +131,8 @@ def load_config(config_path: str) -> PipelineConfig:
     if real_size_data:
         _validate_section(resolved, "real_size", _REQUIRED_REAL_SIZE)
 
+    fp_data = resolved.get("foundationpose", {})
+
     return PipelineConfig(
         task=resolved["task"],
         preset=resolved["preset"],
@@ -149,6 +159,11 @@ def load_config(config_path: str) -> PipelineConfig:
         ),
         real_size=RealSizeConfig(
             longest_edge=real_size_data.get("longest_edge", 1.0),
+        ),
+        foundationpose=FoundationPoseConfig(
+            container=fp_data.get("container", "foundationpose"),
+            workdir=fp_data.get("workdir", "/home/vipuser/FoundationPose"),
+            debug=fp_data.get("debug", 0),
         ),
         output_dir=resolved.get("output_dir", "output/"),
     )

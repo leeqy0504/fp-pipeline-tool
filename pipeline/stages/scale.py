@@ -71,14 +71,14 @@ class ScaleStage(BaseStage):
             hunyuan_dir = manifest.get_output_dir("hunyuangen")
             if not hunyuan_dir:
                 raise StageError("No hunyuangen output found in manifest")
-            obj_path = Path(hunyuan_dir) / "obj.obj"
+            obj_path = Path(hunyuan_dir) / "raw.obj"
 
         self.check_input_path(str(obj_path), "Input OBJ")
 
         obj_text = obj_path.read_text()
         scaled = scale_obj(obj_text, config.real_size.longest_edge)
 
-        out_path = output_dir / "obj.obj"
+        out_path = output_dir / "scaled.obj"
         out_path.write_text(scaled)
 
         return output_dir

@@ -1,16 +1,16 @@
-task: mouse002
+task: mouse008
 preset: foundationpose
 input:
-  rgbd_dir: ./tasks/mouse002/
-  multi_views_dir: ./tasks/mouse002/views/
+  rgbd_dir: ./tasks/mouse008/
+  multi_views_dir: ./tasks/mouse008/views/
   first_frame: 0
 sam2:
   container: sam2-backend-1
   checkpoint: /opt/sam2/checkpoints/sam2.1_hiera_base_plus.pt
   config_file: configs/sam2.1/sam2.1_hiera_b+.yaml
   points:
-  - - 326
-    - 258
+  - - 374
+    - 174
   labels:
   - 1
 hunyuan:
