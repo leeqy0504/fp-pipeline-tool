@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+{% block title %}Pick Points — {{ task_name }}{% endblock %}
+{% set page = "tasks" %}
+
+{% block head %}
+<style>
+.pick-layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 20px;
+  align-items: start;
+}
+.canvas-wrap {
+  position: relative;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  line-height: 0;
+}
+.canvas-wrap canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  cursor: crosshair;
+}
+.panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.panel h3 { margin-bottom: 16px; }
+.point-list {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+.point-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 8px; margin-bottom: 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono); font-size: 12px;
+  background: var(--bg-tertiary);
+}
+.point-row.fg { border-left: 3px solid var(--green); }
+.point-row.bg { border-left: 3px solid var(--red); }
+.point-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.point-dot.fg { background: var(--green); }
+.point-dot.bg { background: var(--red); }
+.point-coords { color: var(--text-dim); }
+.point-type { font-size: 10px; text-transform: uppercase; font-weight: 600; }
+.point-type.fg { color: var(--green); }
+.point-type.bg { color: var(--red); }
+.point-remove {
+  margin-left: auto; cursor: pointer; color: var(--text-muted);
+  font-size: 14px; line-height: 1;
+}
+.point-remove:hover { color: var(--red); }
+.mode-toggle {
+  display: flex; gap: 0; margin-bottom: 16px;
+  border-radius: var(--radius); overflow: hidden;
+  border: 1px solid var(--border);
+}
+.mode-btn {
+  flex: 1; padding: 8px 12px; border: none;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  cursor: pointer; text-align: center;
+  background: var(--bg-tertiary); color: var(--text-dim);
+  transition: background 0.15s, color 0.15s;
+}
+.mode-btn.active.fg-mode { background: var(--green-dim); color: var(--green); }
+.mode-btn.active.bg-mode { background: var(--red-dim); color: var(--red); }
+.mode-btn:hover:not(.active) { background: var(--bg-primary); }
+.mode-hint {
+  font-size: 11px; color: var(--text-muted); margin-bottom: 16px;
+  font-family: var(--font-mono);
+}
+canvas {
+  max-height: 70vh;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-16">
+  <div>
+    <h1>{{ task_name }} &mdash; Pick Points</h1>
+    <p class="text-dim text-sm">Click on the first frame to select SAM2 prompt points</p>
+  </div>
+  <div class="btn-group">
+    <a href="/tasks/{{ task_name }}" class="btn btn-secondary btn-sm">&larr; Task Detail</a>
+  </div>
+</div>
+
+<div class="pick-layout" x-data="pickPoints('{{ task_name }}')" x-init="init()">
+  {# Canvas area #}
+  <div>
+    <div class="canvas-wrap" x-ref="wrap">
+      <canvas x-ref="canvas" @click="addPoint" @contextmenu.prevent="addBgPoint"></canvas>
+    </div>
+    <div class="flex gap-8 mt-8" style="align-items:center">
+      <span class="text-sm text-muted" style="font-family:var(--font-mono)">
+        Click = foreground | Right-click or <kbd style="color:var(--accent)">B</kbd> = background
+      </span>
+      <span class="text-sm text-muted" style="font-family:var(--font-mono)">
+        <kbd style="color:var(--accent)">Ctrl+Z</kbd> undo
+      </span>
+    </div>
+  </div>
+
+  {# Side panel #}
+  <div class="panel">
+    <h3>Points</h3>
+
+    <div class="mode-toggle">
+      <button class="mode-btn fg-mode" :class="{ active: mode === 'fg' }"
+              @click="mode = 'fg'">
+        Foreground
+      </button>
+      <button class="mode-btn bg-mode" :class="{ active: mode === 'bg' }"
+              @click="mode = 'bg'">
+        Background
+      </button>
+    </div>
+
+    <div class="point-list" x-show="points.length > 0">
+      <template x-for="(p, i) in points" :key="i">
+        <div class="point-row" :class="p.label === 1 ? 'fg' : 'bg'">
+          <span class="point-dot" :class="p.label === 1 ? 'fg' : 'bg'"></span>
+          <span class="point-type" :class="p.label === 1 ? 'fg' : 'bg'"
+                x-text="p.label === 1 ? 'FG' : 'BG'"></span>
+          <span class="point-coords" x-text="'(' + p.x + ', ' + p.y + ')'"></span>
+          <span class="point-remove" @click="removePoint(i)">&times;</span>
+        </div>
+      </template>
+    </div>
+    <p class="text-muted text-sm mb-12" x-show="points.length === 0">
+      No points yet. Click on the image to add.
+    </p>
+
+    <div class="form-group">
+      <label>Longest Edge (meters)</label>
+      <input type="number" class="input" x-model="longestEdge" step="0.001" min="0.001"
+             placeholder="e.g. 0.126">
+      <p class="text-muted text-sm mt-4">Real-world size of the object's longest dimension.</p>
+    </div>
+
+    <div x-show="error" class="alert alert-error" x-text="error"></div>
+    <div x-show="success" class="alert alert-success" x-text="success"></div>
+
+    <button class="btn btn-primary" style="width:100%;justify-content:center"
+            @click="savePoints()" :disabled="saving">
+      <span x-show="!saving">Save Points &amp; Update Config</span>
+      <span x-show="saving">Saving...</span>
+    </button>
+
+    <p class="text-muted text-sm mt-8">
+      Saves points to <code>dataset_info.json</code> and updates
+      <code>foundationpose.yaml</code> config.
+    </p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function pickPoints(taskName) {
+  return {
+    points: [],
+    mode: 'fg',
+    longestEdge: 0.126,
+    saving: false,
+    error: '',
+    success: '',
+    img: null,
+    scaleX: 1,
+    scaleY: 1,
+
+    async init() {
+      await this.loadImage();
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'b' || e.key === 'B') {
+          if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+          this.mode = 'bg';
+        }
+        if (e.key === 'f' || e.key === 'F') {
+          if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+          this.mode = 'fg';
+        }
+        if (e.ctrlKey && e.key === 'z') {
+          e.preventDefault();
+          this.points.pop();
+          this.redraw();
+        }
+      });
+      // Load existing data if available
+      await this.loadExisting();
+    },
+
+    async loadImage() {
+      try {
+        const r = await fetch(`/api/tasks/${taskName}/first-frame`);
+        if (!r.ok) throw new Error('Failed to load first frame');
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        this.img = new Image();
+        this.img.onload = () => {
+          const canvas = this.$refs.canvas;
+          canvas.width = this.img.naturalWidth;
+          canvas.height = this.img.naturalHeight;
+          this.redraw();
+        };
+        this.img.src = url;
+      } catch (e) {
+        this.error = 'Failed to load first frame: ' + e.message;
+      }
+    },
+
+    async loadExisting() {
+      try {
+        const r = await fetch(`/api/tasks/${taskName}/dataset-info`);
+        if (!r.ok) return;
+        const info = await r.json();
+        const sp = info.sam2_points || {};
+        if (sp.points && sp.labels) {
+          this.points = sp.points.map((pt, i) => ({
+            x: pt[0], y: pt[1],
+            label: sp.labels[i] !== undefined ? sp.labels[i] : 1,
+          }));
+          if (this.img) this.redraw();
+        }
+        if (info.real_size && info.real_size.longest_edge) {
+          this.longestEdge = info.real_size.longest_edge;
+        }
+      } catch (e) {}
+    },
+
+    redraw() {
+      const canvas = this.$refs.canvas;
+      if (!this.img) return;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(this.img, 0, 0);
+
+      for (const p of this.points) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = p.label === 1 ? 'rgba(0,212,170,0.85)' : 'rgba(255,77,90,0.85)';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Label
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText(p.label === 1 ? 'FG' : 'BG', p.x + 10, p.y - 10);
+      }
+    },
+
+    getCanvasPos(e) {
+      const rect = this.$refs.canvas.getBoundingClientRect();
+      const scaleX = this.img.naturalWidth / rect.width;
+      const scaleY = this.img.naturalHeight / rect.height;
+      return {
+        x: Math.round((e.clientX - rect.left) * scaleX),
+        y: Math.round((e.clientY - rect.top) * scaleY),
+      };
+    },
+
+    addPoint(e) {
+      if (!this.img) return;
+      const pos = this.getCanvasPos(e);
+      const label = this.mode === 'fg' ? 1 : 0;
+      this.points.push({ x: pos.x, y: pos.y, label: label });
+      this.redraw();
+    },
+
+    addBgPoint(e) {
+      if (!this.img) return;
+      const pos = this.getCanvasPos(e);
+      this.points.push({ x: pos.x, y: pos.y, label: 0 });
+      this.redraw();
+    },
+
+    removePoint(i) {
+      this.points.splice(i, 1);
+      this.redraw();
+    },
+
+    async savePoints() {
+      this.saving = true;
+      this.error = '';
+      this.success = '';
+
+      const points = this.points.map(p => [p.x, p.y]);
+      const labels = this.points.map(p => p.label);
+      const body = {
+        points: points,
+        labels: labels,
+        longest_edge: parseFloat(this.longestEdge) || null,
+      };
+
+      try {
+        // Step 1: Save points to dataset_info.json
+        let r = await fetch(`/api/tasks/${taskName}/points`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        let d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Failed to save points');
+
+        // Step 2: Update config
+        r = await fetch(`/api/tasks/${taskName}/setup-config`, {
+          method: 'POST',
+        });
+        d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Failed to update config');
+
+        this.success = `Saved ${points.length} point(s) and updated foundationpose.yaml. Ready to run!`;
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.saving = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

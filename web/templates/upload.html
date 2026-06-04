@@ -2,58 +2,150 @@
 {% block title %}Upload — Pipeline UI{% endblock %}
 {% set page = "upload" %}
 
+{% block head %}
+<style>
+.file-tree {
+  font-family: var(--font-mono); font-size: 12px;
+  max-height: 300px; overflow-y: auto;
+  margin-bottom: 12px;
+}
+.file-tree .dir { color: var(--accent); margin-top: 4px; }
+.file-tree .file { color: var(--text-dim); padding-left: 16px; }
+.file-tree .file::before { content: '\2514\2500 '; color: var(--text-muted); }
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px; margin-bottom: 16px;
+}
+.summary-item {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  padding: 12px;
+  text-align: center;
+}
+.summary-item .num {
+  font-size: 24px; font-weight: 600; font-family: var(--font-mono);
+  color: var(--accent);
+}
+.summary-item .lbl {
+  font-size: 10px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin-top: 4px;
+}
+.step-indicator {
+  display: flex; gap: 0; margin-bottom: 20px;
+}
+.step-indicator .step {
+  flex: 1; padding: 8px 12px; text-align: center;
+  font-size: 11px; font-family: var(--font-mono); color: var(--text-muted);
+  background: var(--bg-secondary); border: 1px solid var(--border);
+}
+.step-indicator .step:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.step-indicator .step:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.step-indicator .step.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+.step-indicator .step.done { color: var(--green); border-color: var(--green); background: var(--green-dim); }
+</style>
+{% endblock %}
+
 {% block content %}
-<h1 class="mb-8">Upload</h1>
-<p class="text-dim text-sm mb-16">Upload task data (images, depth, camera params, views)</p>
+<h1 class="mb-8">Upload Task Data</h1>
+<p class="text-dim text-sm mb-16">Drag &amp; drop a task folder containing <code>rgb/</code>, <code>depth/</code>, <code>views/</code> subdirectories</p>
 
 <div x-data="uploadForm()">
-  <div class="card mb-16" style="max-width:640px">
-    <div class="form-group">
-      <label>Task Name</label>
-      <input type="text" class="input" x-model="taskName" placeholder="e.g. mouse003" autocomplete="off">
-    </div>
+  {# Step indicator #}
+  <div class="step-indicator" style="max-width:640px">
+    <div class="step active" :class="{ done: uploaded }">1. Upload</div>
+    <div class="step" :class="{ active: uploaded, done: pointsSaved }">2. Pick Points</div>
+    <div class="step" :class="{ done: pointsSaved }">3. Config Updated</div>
+  </div>
 
-    <div class="upload-zone mb-12"
-         @dragover.prevent="$el.classList.add('dragover')"
-         @dragleave.prevent="$el.classList.remove('dragover')"
-         @drop.prevent="handleDrop($event); $el.classList.remove('dragover')"
-         @click="$refs.fileInput.click()">
-      <p class="text-dim">Drop files here or click to browse</p>
-      <p class="text-muted text-sm mt-4">
-        Allowed: PNG, JPG, JSON, TXT, YAML, OBJ, PLY, STL, GLB, NPY, NPZ, CSV
-      </p>
-      <input type="file" x-ref="fileInput" multiple hidden
-             @change="handleFiles($event)">
-    </div>
-
-    <div x-show="files.length > 0" class="mb-12">
-      <div class="flex justify-between items-center mb-8">
-        <span class="text-sm text-dim" x-text="files.length + ' file(s)'"></span>
-        <button class="btn btn-secondary btn-sm" @click="clearFiles()">Clear</button>
+  {# Upload area #}
+  <div x-show="!uploaded">
+    <div class="card mb-16" style="max-width:640px">
+      <div class="form-group">
+        <label>Task Name</label>
+        <input type="text" class="input" x-model="taskName" placeholder="e.g. mouse009" autocomplete="off">
       </div>
-      <template x-for="(f, i) in files" :key="i">
-        <div class="flex justify-between items-center text-sm" style="padding:4px 0;font-family:var(--font-mono)">
-          <span class="truncate" style="max-width:400px" x-text="f.name"></span>
-          <span class="text-muted" x-text="formatSize(f.size)"></span>
+
+      <div class="upload-zone mb-12"
+           @dragover.prevent="$el.classList.add('dragover')"
+           @dragleave.prevent="$el.classList.remove('dragover')"
+           @drop.prevent="handleDrop($event); $el.classList.remove('dragover')"
+           @click="$refs.folderInput.click()">
+        <p class="text-dim">Drop task folder here, or click to select</p>
+        <p class="text-muted text-sm mt-4">
+          Folder should contain <code>rgb/</code>, <code>depth/</code>, <code>views/</code> subdirectories
+        </p>
+        <input type="file" x-ref="folderInput" webkitdirectory multiple hidden
+               @change="handleFolderSelect($event)">
+      </div>
+
+      {# File tree preview #}
+      <div x-show="fileTree.length > 0" class="mb-12">
+        <div class="flex justify-between items-center mb-8">
+          <span class="text-sm text-dim" x-text="totalFiles + ' file(s)'"></span>
+          <button class="btn btn-secondary btn-sm" @click="clearAll()">Clear</button>
         </div>
-      </template>
+        <div class="file-tree">
+          <template x-for="(item, i) in fileTree" :key="i">
+            <div>
+              <div class="dir" x-show="item.isDir" x-text="item.path + '/'"></div>
+              <div class="file" x-show="!item.isDir" x-text="item.name"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div x-show="error" class="alert alert-error" x-text="error"></div>
+      <div x-show="success" class="alert alert-success" x-text="success"></div>
+
+      <div class="flex gap-8 items-center">
+        <button class="btn btn-primary"
+                @click="upload()"
+                :disabled="uploading || !taskName">
+          <span x-show="!uploading">Upload</span>
+          <span x-show="uploading">Uploading...</span>
+        </button>
+        <div x-show="uploading" class="flex-1">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="'width:' + progress + '%'"></div>
+          </div>
+          <span class="text-muted text-sm" x-text="progress + '%'"></span>
+        </div>
+      </div>
     </div>
+  </div>
 
-    <div x-show="error" class="alert alert-error" x-text="error"></div>
-    <div x-show="success" class="alert alert-success" x-text="success"></div>
-
-    <div class="flex gap-8 items-center">
-      <button class="btn btn-primary"
-              @click="upload()"
-              :disabled="uploading || !taskName || files.length === 0">
-        <span x-show="!uploading">Upload</span>
-        <span x-show="uploading">Uploading...</span>
-      </button>
-      <div x-show="uploading" class="flex-1">
-        <div class="progress-bar">
-          <div class="progress-fill" :style="'width:' + progress + '%'"></div>
+  {# Post-upload summary #}
+  <div x-show="uploaded">
+    <div class="card mb-16" style="max-width:640px">
+      <h3>Upload Complete</h3>
+      <div class="summary-grid">
+        <div class="summary-item">
+          <div class="num" x-text="summary.rgb_count || 0"></div>
+          <div class="lbl">RGB Frames</div>
         </div>
-        <span class="text-muted text-sm" x-text="progress + '%'"></span>
+        <div class="summary-item">
+          <div class="num" x-text="summary.depth_count || 0"></div>
+          <div class="lbl">Depth Frames</div>
+        </div>
+        <div class="summary-item">
+          <div class="num" x-text="summary.views?.length || 0"></div>
+          <div class="lbl">Views</div>
+        </div>
+        <div class="summary-item">
+          <div class="num" x-text="summary.other?.length || 0"></div>
+          <div class="lbl">Other Files</div>
+        </div>
+      </div>
+
+      <div class="flex gap-8 mt-12">
+        <a :href="'/tasks/' + taskName + '/pick'" class="btn btn-primary">
+          Continue to Pick Points &rarr;
+        </a>
+        <button class="btn btn-secondary" @click="resetForm()">
+          Upload Another
+        </button>
       </div>
     </div>
   </div>
@@ -65,71 +157,208 @@
 function uploadForm() {
   return {
     taskName: '',
-    files: [],
+    files: [],       // File objects with .relativePath prop
+    fileTree: [],    // Visual tree
+    totalFiles: 0,
     uploading: false,
     progress: 0,
     error: '',
     success: '',
+    uploaded: false,
+    pointsSaved: false,
+    summary: null,
+    uploadResult: null,
 
-    handleDrop(e) {
-      this.handleFiles({target: {files: e.dataTransfer.files}});
-    },
-
-    handleFiles(e) {
-      const allowed = ['.png','.jpg','.jpeg','.json','.txt','.yaml','.yml',
-                       '.obj','.ply','.stl','.glb','.gltf','.mtl',
-                       '.npy','.npz','.csv','.tsv'];
-      const newFiles = Array.from(e.target.files).filter(f => {
-        const ext = '.' + f.name.split('.').pop().toLowerCase();
-        return allowed.includes(ext);
-      });
-      if (newFiles.length === 0) {
-        this.error = 'No valid files selected. Check file extensions.';
-      } else {
-        this.error = '';
+    async handleDrop(e) {
+      const items = e.dataTransfer.items;
+      if (!items) return;
+      const entries = [];
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+        if (entry) entries.push(entry);
       }
-      this.files = [...this.files, ...newFiles];
-      if (e.target) e.target.value = '';
+      if (entries.length > 0) {
+        await this.traverseEntries(entries);
+      } else {
+        // Fallback: plain files
+        this.addFiles(Array.from(e.dataTransfer.files));
+      }
     },
 
-    clearFiles() {
+    handleFolderSelect(e) {
+      this.addFiles(Array.from(e.target.files));
+      e.target.value = '';
+    },
+
+    async traverseEntries(entries, prefix = '') {
+      const files = [];
+      const dirs = [];
+      for (const entry of entries) {
+        if (entry.isFile) {
+          files.push({ entry, prefix });
+        } else if (entry.isDirectory) {
+          dirs.push({ entry, prefix });
+        }
+      }
+      // Add files from this level
+      for (const { entry, prefix } of files) {
+        const file = await this.entryToFile(entry, prefix);
+        if (file) this.files.push(file);
+      }
+      // Recurse into directories
+      for (const { entry, prefix } of dirs) {
+        const newPrefix = prefix ? prefix + '/' + entry.name : entry.name;
+        const reader = entry.createReader();
+        const subEntries = await this.readAllEntries(reader);
+        await this.traverseEntries(subEntries, newPrefix);
+      }
+    },
+
+    readAllEntries(reader) {
+      return new Promise((resolve) => {
+        const all = [];
+        const read = () => {
+          reader.readEntries((entries) => {
+            if (entries.length === 0) { resolve(all); return; }
+            all.push(...entries);
+            read();
+          });
+        };
+        read();
+      });
+    },
+
+    entryToFile(entry, prefix) {
+      return new Promise((resolve) => {
+        entry.file((file) => {
+          file.relativePath = prefix ? prefix + '/' + entry.name : entry.name;
+          resolve(file);
+        });
+      });
+    },
+
+    addFiles(fileList) {
+      for (const f of fileList) {
+        if (!f.relativePath) {
+          f.relativePath = f.webkitRelativePath || f.name;
+        }
+        this.files.push(f);
+      }
+      this.buildTree();
+    },
+
+    buildTree() {
+      // Build a compact file tree for preview
+      const seen = new Set();
+      const tree = [];
+      const dirSet = new Set();
+
+      for (const f of this.files) {
+        const path = f.relativePath || f.name;
+        const parts = path.split('/');
+        // Add directories
+        for (let i = 0; i < parts.length - 1; i++) {
+          const dirPath = parts.slice(0, i + 1).join('/');
+          if (!dirSet.has(dirPath)) {
+            dirSet.add(dirPath);
+            tree.push({ isDir: true, path: dirPath, name: parts[i] });
+          }
+        }
+      }
+      // Add files
+      for (const f of this.files) {
+        const path = f.relativePath || f.name;
+        const name = path.split('/').pop();
+        if (!seen.has(path)) {
+          seen.add(path);
+          tree.push({ isDir: false, path: path, name: name });
+        }
+      }
+
+      this.fileTree = tree;
+      this.totalFiles = this.files.length;
+    },
+
+    clearAll() {
       this.files = [];
+      this.fileTree = [];
+      this.totalFiles = 0;
       this.error = '';
       this.success = '';
     },
 
-    formatSize(bytes) {
-      if (bytes < 1024) return bytes + ' B';
-      if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
-      return (bytes/(1024*1024)).toFixed(1) + ' MB';
-    },
-
     async upload() {
       if (!this.taskName.trim()) { this.error = 'Task name is required'; return; }
-      if (this.files.length === 0) { this.error = 'No files selected'; return; }
+      if (this.files.length === 0) { this.error = 'No files selected. Drop a folder.'; return; }
 
       this.uploading = true; this.error = ''; this.success = ''; this.progress = 0;
 
       const form = new FormData();
       form.append('task_name', this.taskName.trim());
-      this.files.forEach(f => form.append('files', f));
+
+      // Build paths JSON and append files
+      const paths = [];
+      let total = 0;
+      for (const f of this.files) {
+        const path = f.relativePath || f.name;
+        paths.push(path);
+        form.append('files', f);
+        total += f.size;
+      }
+      form.append('paths', JSON.stringify(paths));
 
       try {
-        const r = await fetch('/api/tasks/upload', {
-          method: 'POST',
-          body: form
-        });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.detail || 'Upload failed');
-        this.progress = 100;
-        this.success = `${d.files.length} file(s) uploaded to "${d.task_name}" (${this.formatSize(d.total_bytes)})`;
+        // XHR for progress tracking
+        const result = await this.xhrUpload(form, total);
+        this.uploadResult = result;
+        this.summary = result.summary || {};
+        this.success = result.files.length + ' file(s) uploaded';
+        this.uploaded = true;
         this.files = [];
-      } catch(e) {
+        this.fileTree = [];
+      } catch (e) {
         this.error = e.message;
       } finally {
         this.uploading = false;
       }
-    }
+    },
+
+    xhrUpload(form, totalBytes) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/tasks/upload');
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            this.progress = Math.round((e.loaded / e.total) * 100);
+          }
+        };
+        xhr.onload = () => {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (xhr.status >= 400) throw new Error(data.detail || 'Upload failed');
+            resolve(data);
+          } catch (e) {
+            if (e.message && e.message !== 'Upload failed') reject(e);
+            else reject(new Error('Upload failed: ' + xhr.status));
+          }
+        };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send(form);
+      });
+    },
+
+    resetForm() {
+      this.taskName = '';
+      this.files = [];
+      this.fileTree = [];
+      this.totalFiles = 0;
+      this.uploaded = false;
+      this.pointsSaved = false;
+      this.summary = null;
+      this.uploadResult = null;
+      this.success = '';
+      this.error = '';
+    },
   };
 }
 </script>

@@ -257,6 +257,14 @@ async def upload_page(request: Request):
     return _render(request, "upload.html", {"page": "upload"})
 
 
+@app.get("/tasks/{task_name}/pick")
+async def pick_points_page(task_name: str, request: Request):
+    tasks_dir = PROJECT_ROOT / "tasks" / task_name
+    if not tasks_dir.is_dir():
+        return HTMLResponse("<h1>Task not found</h1>", status_code=404)
+    return _render(request, "pick_points.html", {"task_name": task_name, "page": "tasks"})
+
+
 @app.get("/configs")
 async def configs_page(request: Request):
     return _render(request, "config_editor.html", {"page": "configs"})
