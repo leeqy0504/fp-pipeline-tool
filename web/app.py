@@ -221,7 +221,6 @@ async def task_detail_page(task_name: str, request: Request):
         return HTMLResponse("<h1>Task not found</h1>", status_code=404)
 
     scheduler = request.app.state.scheduler
-    job_store = request.app.state.job_store
     output_dir = PROJECT_ROOT / "output"
 
     manifest = None
@@ -239,15 +238,10 @@ async def task_detail_page(task_name: str, request: Request):
             running_job_id = j.job_id
             break
 
-    # Fetch recent jobs for this task from job_store (disk)
-    all_disk_jobs = await job_store.list_jobs()
-    jobs = [j for j in all_disk_jobs if j.get("task_name") == task_name]
-
     return _render(request, "task_detail.html", {
         "task_name": task_name,
         "manifest": manifest,
         "running_job_id": running_job_id,
-        "jobs": jobs,
         "page": "tasks",
     })
 

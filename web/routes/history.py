@@ -15,9 +15,12 @@ def _project_root(request: Request) -> Path:
 
 
 @router.get("/history")
-async def list_history(request: Request):
+async def list_history(request: Request, task: str = None):
     job_store = request.app.state.job_store
     jobs = await job_store.list_jobs()
+    if task:
+        jobs = [j for j in jobs if j.get("task_name") == task]
+    jobs.sort(key=lambda j: j.get("start_time", 0), reverse=True)
     return jobs
 
 

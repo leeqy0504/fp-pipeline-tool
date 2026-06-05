@@ -34,10 +34,17 @@
   <span class="text-muted text-sm">auto-refresh 10s</span>
 </div>
 
-<div x-data="historyView()" x-init="load()">
-  <div class="card mb-16"
-       hx-get="/api/history" hx-trigger="every 10s" hx-swap="none"
-       hx-on::after-request="onHtmxRefresh(event)">
+<div x-data="historyView()" x-init="init()">
+  <div class="card mb-16">
+    <div class="flex justify-between items-center mb-12" style="padding:12px 12px 0 12px">
+      <div class="flex items-center gap-8">
+        <span class="text-sm text-dim" x-show="!filterTask">All tasks</span>
+        <span class="badge badge-running" x-show="filterTask">
+          Task: <span x-text="filterTask" class="text-accent"></span>
+          <button class="btn btn-secondary btn-sm ml-8" @click="clearFilter()" style="font-size:10px;padding:2px 6px">&times; Clear</button>
+        </span>
+      </div>
+    </div>
     <table>
       <thead>
         <tr>
@@ -125,18 +132,40 @@ function historyView() {
     showConfirm: false,
     confirmJobId: null,
     deleting: null,
+    filterTask: '',
+
+    _pollTimer: null,
+
+    init() {
+      const params = new URLSearchParams(location.search);
+      this.filterTask = params.get('task') || '';
+      this.load();
+      this._startPolling();
+    },
+
+    apiUrl() {
+      const base = '/api/history';
+      return this.filterTask ? `${base}?task=${encodeURIComponent(this.filterTask)}` : base;
+    },
+
+    _startPolling() {
+      if (this._pollTimer) return;
+      this._pollTimer = setInterval(() => this.load(), 10000);
+    },
 
     async load() {
       try {
-        const r = await fetch('/api/history');
+        const r = await fetch(this.apiUrl());
         this.jobs = await r.json();
       } catch(e) {}
     },
 
-    onHtmxRefresh(e) {
-      try {
-        this.jobs = JSON.parse(e.detail.xhr.responseText);
-      } catch(_) {}
+    clearFilter() {
+      this.filterTask = '';
+      const url = new URL(location);
+      url.searchParams.delete('task');
+      history.replaceState(null, '', url);
+      this.load();
     },
 
     async select(jobId) {

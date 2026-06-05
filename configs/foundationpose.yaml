@@ -1,30 +1,30 @@
-task: mouse008
-preset: foundationpose
-input:
-  rgbd_dir: ./tasks/mouse008/
-  multi_views_dir: ./tasks/mouse008/views/
-  first_frame: 0
-sam2:
-  container: sam2-backend-1
-  checkpoint: /opt/sam2/checkpoints/sam2.1_hiera_base_plus.pt
-  config_file: configs/sam2.1/sam2.1_hiera_b+.yaml
-  points:
-  - - 374
-    - 174
-  labels:
-  - 1
 hunyuan:
+  enable_pbr: false
+  face_count: 50000
+  model: '3.1'
+  region: ap-guangzhou
   secret_id: ${TENCENT_SECRET_ID}
   secret_key: ${TENCENT_SECRET_KEY}
-  region: ap-guangzhou
-  model: '3.1'
-  face_count: 50000
-  enable_pbr: false
   views:
+    back: back.jpg
     front: front.jpg
     left: left.jpg
     right: right.jpg
-    back: back.jpg
-real_size:
-  longest_edge: 0.126
+input:
+  first_frame: 0
+  multi_views_dir: ./tasks/mouse101/views/
+  rgbd_dir: ./tasks/mouse101/
 output_dir: output/
+preset: foundationpose
+real_size:
+  longest_edge: 0.12666
+sam2:
+  checkpoint: /opt/sam2/checkpoints/sam2.1_hiera_base_plus.pt
+  config_file: configs/sam2.1/sam2.1_hiera_b+.yaml
+  container: sam2-backend-1
+  labels:
+  - 1
+  points:
+  - - 320
+    - 252
+task: mouse101
