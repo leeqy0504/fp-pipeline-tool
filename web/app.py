@@ -101,7 +101,7 @@ async def api_logout():
 # ── Register API routers ───────────────────────────────────────
 
 
-from web.routes.tasks import router as tasks_router
+from web.routes.tasks import router as tasks_router, _build_tasks_list
 from web.routes.jobs import router as jobs_router
 from web.routes.configs import router as configs_router
 from web.routes.upload import router as upload_router
@@ -158,59 +158,11 @@ async def root():
 
 @app.get("/tasks")
 async def tasks_page(request: Request):
-    scheduler = request.app.state.scheduler
-    job_store = request.app.state.job_store
-    output_dir = PROJECT_ROOT / "output"
-
-    all_jobs = await scheduler.list_all()
-    running_map = {}
-    latest_map = {}
-    for j in all_jobs:
-        if j.status.value == "running":
-            running_map[j.task_name] = j.job_id
-        if j.task_name not in latest_map or j.start_time > latest_map[j.task_name][0]:
-            latest_map[j.task_name] = (j.start_time, j.job_id)
-
-    disk_jobs = await job_store.list_jobs()
-    disk_latest = {}
-    for dj in disk_jobs:
-        key = dj.get("task_name")
-        if not key:
-            continue
-        st = dj.get("start_time", 0)
-        if key not in disk_latest or st > disk_latest[key][0]:
-            disk_latest[key] = (st, dj["job_id"])
-
-    tasks = []
-    tasks_dir = PROJECT_ROOT / "tasks"
-    if tasks_dir.exists():
-        for task_dir in sorted(tasks_dir.iterdir()):
-            if not task_dir.is_dir():
-                continue
-            task_name = task_dir.name
-            manifest = None
-            manifest_path = output_dir / task_name / "manifest.json"
-            if manifest_path.exists():
-                try:
-                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
-
-            running_job_id = running_map.get(task_name)
-            if task_name in latest_map:
-                latest_job_id = latest_map[task_name][1]
-            elif task_name in disk_latest:
-                latest_job_id = disk_latest[task_name][1]
-            else:
-                latest_job_id = None
-
-            tasks.append({
-                "task_name": task_name,
-                "manifest": manifest,
-                "latest_job_id": latest_job_id,
-                "running_job_id": running_job_id,
-            })
-
+    tasks = await _build_tasks_list(
+        request.app.state.scheduler,
+        request.app.state.job_store,
+        PROJECT_ROOT,
+    )
     return _render(request, "tasks.html", {"tasks": tasks, "page": "tasks"})
 
 
@@ -221,7 +173,6 @@ async def task_detail_page(task_name: str, request: Request):
         return HTMLResponse("<h1>Task not found</h1>", status_code=404)
 
     scheduler = request.app.state.scheduler
-    job_store = request.app.state.job_store
     output_dir = PROJECT_ROOT / "output"
 
     manifest = None
@@ -239,15 +190,10 @@ async def task_detail_page(task_name: str, request: Request):
             running_job_id = j.job_id
             break
 
-    # Fetch recent jobs for this task from job_store (disk)
-    all_disk_jobs = await job_store.list_jobs()
-    jobs = [j for j in all_disk_jobs if j.get("task_name") == task_name]
-
     return _render(request, "task_detail.html", {
         "task_name": task_name,
         "manifest": manifest,
         "running_job_id": running_job_id,
-        "jobs": jobs,
         "page": "tasks",
     })
 
@@ -282,50 +228,9 @@ async def history_page(request: Request):
 @app.get("/_/tasks-list")
 async def htmx_tasks_list(request: Request):
     """Return rendered tasks_list.html partial for HTMX polling."""
-    scheduler = request.app.state.scheduler
-    job_store = request.app.state.job_store
-    output_dir = PROJECT_ROOT / "output"
-
-    all_jobs = await scheduler.list_all()
-    running_map = {j.task_name: j.job_id for j in all_jobs if j.status.value == "running"}
-    latest_map = {}
-    for j in all_jobs:
-        if j.task_name not in latest_map or j.start_time > latest_map[j.task_name][0]:
-            latest_map[j.task_name] = (j.start_time, j.job_id)
-
-    disk_jobs = await job_store.list_jobs()
-    disk_latest = {}
-    for dj in disk_jobs:
-        key = dj.get("task_name")
-        if key and (key not in disk_latest or dj.get("start_time", 0) > disk_latest[key][0]):
-            disk_latest[key] = (dj.get("start_time", 0), dj["job_id"])
-
-    tasks = []
-    tasks_dir = PROJECT_ROOT / "tasks"
-    if tasks_dir.exists():
-        for task_dir in sorted(tasks_dir.iterdir()):
-            if not task_dir.is_dir():
-                continue
-            task_name = task_dir.name
-            manifest = None
-            mp = output_dir / task_name / "manifest.json"
-            if mp.exists():
-                try:
-                    manifest = json.loads(mp.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
-
-            running_job_id = running_map.get(task_name)
-            if task_name in latest_map:
-                latest_job_id = latest_map[task_name][1]
-            elif task_name in disk_latest:
-                latest_job_id = disk_latest[task_name][1]
-            else:
-                latest_job_id = None
-
-            tasks.append({
-                "task_name": task_name, "manifest": manifest,
-                "latest_job_id": latest_job_id, "running_job_id": running_job_id,
-            })
-
+    tasks = await _build_tasks_list(
+        request.app.state.scheduler,
+        request.app.state.job_store,
+        PROJECT_ROOT,
+    )
     return _render(request, "tasks_list.html", {"tasks": tasks})

@@ -15,8 +15,7 @@ class SaveConfigBody(BaseModel):
     content: str
 
 
-def _project_root(request: Request) -> Path:
-    return request.app.state.project_root
+from web.routes import _project_root
 
 
 def _configs_dir(request: Request) -> Path:

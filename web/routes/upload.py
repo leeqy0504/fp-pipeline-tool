@@ -19,8 +19,7 @@ MAX_FILE_COUNT = 500
 DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
 
-def _project_root(request: Request) -> Path:
-    return request.app.state.project_root
+from web.routes import _project_root
 
 
 # ── Upload (with directory structure preservation) ──────────────

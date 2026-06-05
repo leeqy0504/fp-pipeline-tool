@@ -14,8 +14,7 @@ class RunRequest(BaseModel):
     config_path: str | None = None
 
 
-def _project_root(request: Request) -> Path:
-    return request.app.state.project_root
+from web.routes import _project_root
 
 
 def _tasks_dir(request: Request) -> Path:
@@ -26,31 +25,29 @@ def _output_dir(request: Request) -> Path:
     return _project_root(request) / "output"
 
 
-# ── Task listing ──────────────────────────────────────────────
+# ── Shared task-list builder ──────────────────────────────────
 
 
-@router.get("/tasks")
-async def list_tasks(request: Request):
-    tasks_dir = _tasks_dir(request)
+async def _build_tasks_list(scheduler, job_store, project_root: Path) -> list[dict]:
+    """Return a sorted list of task dicts with manifest + job lookups.
+
+    Used by both the API endpoint and the page routes in app.py.
+    """
+    tasks_dir = project_root / "tasks"
+    output_dir = project_root / "output"
+
     if not tasks_dir.exists():
         return []
 
-    scheduler = request.app.state.scheduler
-    job_store = request.app.state.job_store
-    output_dir = _output_dir(request)
-
-    # Build fast lookups from scheduler
     all_jobs = await scheduler.list_all()
     running_map = {}
     latest_map = {}
     for j in all_jobs:
-        key = j.task_name
         if j.status.value == "running":
-            running_map[key] = j.job_id
-        if key not in latest_map or j.start_time > latest_map[key][0]:
-            latest_map[key] = (j.start_time, j.job_id)
+            running_map[j.task_name] = j.job_id
+        if j.task_name not in latest_map or j.start_time > latest_map[j.task_name][0]:
+            latest_map[j.task_name] = (j.start_time, j.job_id)
 
-    # On-disk fallback for latest_job_id (jobs from previous sessions)
     disk_jobs = await job_store.list_jobs()
     disk_latest = {}
     for dj in disk_jobs:
@@ -76,8 +73,6 @@ async def list_tasks(request: Request):
                 pass
 
         running_job_id = running_map.get(task_name)
-
-        # Prefer in-memory latest, fall back to disk
         if task_name in latest_map:
             latest_job_id = latest_map[task_name][1]
         elif task_name in disk_latest:
@@ -93,6 +88,18 @@ async def list_tasks(request: Request):
         })
 
     return tasks
+
+
+# ── Task listing ──────────────────────────────────────────────
+
+
+@router.get("/tasks")
+async def list_tasks(request: Request):
+    return await _build_tasks_list(
+        request.app.state.scheduler,
+        request.app.state.job_store,
+        _project_root(request),
+    )
 
 
 # ── Task detail ───────────────────────────────────────────────

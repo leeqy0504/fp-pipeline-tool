@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, Request, HTTPException
 
@@ -7,8 +6,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 
-def _project_root(request: Request) -> Path:
-    return request.app.state.project_root
+from web.routes import _project_root
 
 
 # ── Job detail ────────────────────────────────────────────────

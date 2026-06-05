@@ -74,7 +74,7 @@
 </div>
 
 {# ── Actions ── #}
-<div class="section" x-data="taskActions({{ task_name | tojson }}, {{ (running_job_id or '') | tojson }})" x-init="init()">
+<div class="section" x-data="taskActions" x-init="init($el)" data-task-name="{{ task_name }}" data-running-job-id="{{ running_job_id or '' }}">
   <h3>Actions</h3>
   <div class="card">
     <div class="btn-group mb-12">
@@ -119,29 +119,15 @@
   </div>
 </div>
 
-{# ── Job history ── #}
-<div class="section" id="job-history"
-     hx-get="/api/history" hx-trigger="every 5s"
-     hx-swap="innerHTML">
-  <h3>Recent Jobs</h3>
-  {% if jobs %}
+{# ── Job history link ── #}
+<div class="section">
+  <h3>Job History</h3>
   <div class="card">
-    {% for j in jobs %}
-      {% if j.task_name == task_name %}
-      <div class="job-row">
-        <span class="mono text-accent" style="font-size:11px">{{ j.job_id[:10] }}</span>
-        <span class="badge badge-{{ j.status }}">{{ j.status }}</span>
-        <span class="text-muted" style="font-size:11px">{{ j.preset }}</span>
-        {% if j.end_time and j.start_time %}
-        <span class="text-muted" style="font-size:11px;margin-left:auto">{{ "%.1fs"|format(j.end_time - j.start_time) }}</span>
-        {% endif %}
-      </div>
-      {% endif %}
-    {% endfor %}
+    <p class="text-sm text-dim mb-8">View all job runs for this task.</p>
+    <a href="/history?task={{ task_name }}" class="btn btn-secondary btn-sm">
+      View Job History &rarr;
+    </a>
   </div>
-  {% else %}
-  <p class="text-muted text-sm">No jobs yet.</p>
-  {% endif %}
 </div>
 
 {# ── WebSocket log terminal ── #}
@@ -160,19 +146,25 @@
 
 {% block scripts %}
 <script>
-function taskActions(taskName, initialRunningJobId) {
+function taskActions() {
   return {
+    taskName: '',
     preset: 'foundationpose',
-    running: !!initialRunningJobId,
+    running: false,
     submitting: false,
-    currentJobId: initialRunningJobId || '',
-    jobStatus: initialRunningJobId ? 'running' : '',
+    currentJobId: '',
+    jobStatus: '',
     error: '',
     success: '',
     _pollTimer: null,
 
-    init() {
-      if (this.currentJobId) {
+    init(el) {
+      this.taskName = el.dataset.taskName;
+      const initialRunningJobId = el.dataset.runningJobId;
+      if (initialRunningJobId) {
+        this.running = true;
+        this.currentJobId = initialRunningJobId;
+        this.jobStatus = 'running';
         this._startPolling();
       }
     },
@@ -203,7 +195,7 @@ function taskActions(taskName, initialRunningJobId) {
     async runJob() {
       this.submitting = true; this.error = ''; this.success = '';
       try {
-        const r = await fetch(`/api/tasks/${taskName}/run`, {
+        const r = await fetch(`/api/tasks/${this.taskName}/run`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({preset: this.preset})
@@ -241,10 +233,10 @@ function taskActions(taskName, initialRunningJobId) {
     },
 
     async resetTask() {
-      if (!confirm('Reset manifest for "' + taskName + '"?\n\nThis ONLY deletes the manifest.json status file.\nOutput data, source files, and job history are NOT affected.')) return;
+      if (!confirm('Reset manifest for "' + this.taskName + '"?\n\nThis ONLY deletes the manifest.json status file.\nOutput data, source files, and job history are NOT affected.')) return;
       this.submitting = true; this.error = '';
       try {
-        const r = await fetch(`/api/tasks/${taskName}/reset`, {method: 'POST'});
+        const r = await fetch(`/api/tasks/${this.taskName}/reset`, {method: 'POST'});
         if (!r.ok) throw new Error((await r.json()).detail || 'Reset failed');
         this.success = 'Manifest deleted';
         this.running = false;
