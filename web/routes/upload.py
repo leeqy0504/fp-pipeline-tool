@@ -13,7 +13,9 @@ ALLOWED_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".json", ".txt", ".yaml", ".yml",
     ".obj", ".ply", ".stl", ".glb", ".gltf", ".mtl",
     ".npy", ".npz", ".csv", ".tsv",
+    ".pt", ".pth", ".onnx", ".bin",
 }
+MAX_FILE_COUNT = 500
 DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
 
@@ -66,6 +68,9 @@ async def upload_files(request: Request):
             flat_files = []
         except (json.JSONDecodeError, ValueError):
             pass
+
+    if len(file_items) > MAX_FILE_COUNT:
+        raise HTTPException(400, f"Too many files ({len(file_items)}). Maximum is {MAX_FILE_COUNT}.")
 
     total_bytes = 0
     uploaded = []
@@ -143,7 +148,7 @@ async def get_dataset_info(task_name: str, request: Request):
 
 @router.get("/tasks/{task_name}/first-frame")
 async def get_first_frame(task_name: str, request: Request):
-    from fastapi.responses import FileResponse
+    from fastapi.responses import Response
 
     tasks_dir = _project_root(request) / "tasks" / task_name
     rgb_dir = tasks_dir / "rgb"
@@ -154,7 +159,9 @@ async def get_first_frame(task_name: str, request: Request):
     if not pngs:
         raise HTTPException(404, "No PNG frames found in rgb/")
 
-    return FileResponse(rgb_dir / pngs[0], media_type="image/png")
+    content = (rgb_dir / pngs[0]).read_bytes()
+    return Response(content=content, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=300"})
 
 
 # ── Save points + real_size ────────────────────────────────────
@@ -174,6 +181,9 @@ async def save_points(task_name: str, request: Request):
 
     if len(body.points) != len(body.labels):
         raise HTTPException(400, "points and labels arrays must have the same length")
+
+    if body.longest_edge is not None and body.longest_edge <= 0:
+        raise HTTPException(400, "longest_edge must be greater than 0")
 
     tasks_dir = _project_root(request) / "tasks" / task_name
     if not tasks_dir.is_dir():
@@ -243,6 +253,84 @@ async def setup_config(task_name: str, request: Request):
     logger.info("Config updated for task '%s'", task_name)
 
     return {"detail": "ok", "config": str(config_path)}
+
+
+# ── Combined save + setup (transactional) ─────────────────────
+
+
+@router.post("/tasks/{task_name}/save-and-setup")
+async def save_and_setup(task_name: str, request: Request):
+    """Save points and update config in a single transactional call."""
+    from pydantic import BaseModel
+    import yaml
+
+    class PointsBody(BaseModel):
+        points: list[list[int]] = []
+        labels: list[int] = []
+        longest_edge: float | None = None
+
+    data = await request.json()
+    body = PointsBody(**data)
+
+    if len(body.points) != len(body.labels):
+        raise HTTPException(400, "points and labels arrays must have the same length")
+
+    if body.longest_edge is not None and body.longest_edge <= 0:
+        raise HTTPException(400, "longest_edge must be greater than 0")
+
+    tasks_dir = _project_root(request) / "tasks" / task_name
+    if not tasks_dir.is_dir():
+        raise HTTPException(404, f"Task '{task_name}' not found")
+
+    configs_dir = _project_root(request) / "configs"
+    config_path = configs_dir / "foundationpose.yaml"
+    if not config_path.exists():
+        raise HTTPException(404, "Config file foundationpose.yaml not found")
+
+    # Step 1: Save points to dataset_info.json
+    info_path = tasks_dir / "dataset_info.json"
+    if info_path.exists():
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+    else:
+        info = _build_dataset_info(tasks_dir)
+
+    info["sam2_points"] = {
+        "points": body.points,
+        "labels": body.labels,
+        "description": "前景=1 背景=0. 在首帧 RGB 图上采集，供 sam2mask 阶段使用",
+    }
+
+    if body.longest_edge is not None:
+        info["real_size"] = {"longest_edge": body.longest_edge}
+
+    info_path.write_text(json.dumps(info, indent=4, ensure_ascii=False), encoding="utf-8")
+    logger.info("Points saved for task '%s': %d points, longest_edge=%s",
+                task_name, len(body.points), body.longest_edge)
+
+    # Step 2: Update config (same transaction)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["task"] = task_name
+    config["input"]["rgbd_dir"] = f"./tasks/{task_name}/"
+    config["input"]["multi_views_dir"] = f"./tasks/{task_name}/views/"
+
+    sp = info.get("sam2_points", {})
+    config["sam2"]["points"] = sp.get("points", [])
+    config["sam2"]["labels"] = sp.get("labels", [])
+
+    rs = info.get("real_size", {})
+    if rs.get("longest_edge"):
+        config["real_size"]["longest_edge"] = rs["longest_edge"]
+
+    config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True),
+                           encoding="utf-8")
+    logger.info("Config updated for task '%s'", task_name)
+
+    return {
+        "detail": "ok",
+        "points_count": len(body.points),
+        "longest_edge": body.longest_edge,
+        "config": str(config_path),
+    }
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -320,7 +408,7 @@ def _build_dataset_info(task_dir: Path) -> dict:
     return {
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "output_dir": str(task_dir),
-        "resolution": {"width": 640, "height": 480},
+        "resolution": {"width": camera_params.get("width", 640), "height": camera_params.get("height", 480)},
         "frame_count": frame_count,
         "camera": camera_params,
     }

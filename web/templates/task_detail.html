@@ -74,7 +74,7 @@
 </div>
 
 {# ── Actions ── #}
-<div class="section" x-data="taskActions('{{ task_name }}', '{{ running_job_id or '' }}')" x-init="init()">
+<div class="section" x-data="taskActions({{ task_name | tojson }}, {{ (running_job_id or '') | tojson }})" x-init="init()">
   <h3>Actions</h3>
   <div class="card">
     <div class="btn-group mb-12">

@@ -72,7 +72,9 @@
            @dragleave.prevent="$el.classList.remove('dragover')"
            @drop.prevent="handleDrop($event); $el.classList.remove('dragover')"
            @click="$refs.folderInput.click()">
-        <p class="text-dim">Drop task folder here, or click to select</p>
+        <p class="text-dim" x-show="files.length === 0 && !traversing">Drop task folder here, or click to select</p>
+        <p class="text-dim" x-show="traversing">Reading folder structure...</p>
+        <p class="text-accent" x-show="files.length > 0" x-text="files.length + ' file(s) loaded'"></p>
         <p class="text-muted text-sm mt-4">
           Folder should contain <code>rgb/</code>, <code>depth/</code>, <code>views/</code> subdirectories
         </p>
@@ -102,8 +104,9 @@
       <div class="flex gap-8 items-center">
         <button class="btn btn-primary"
                 @click="upload()"
-                :disabled="uploading || !taskName">
-          <span x-show="!uploading">Upload</span>
+                :disabled="uploading || traversing || !taskName || files.length === 0">
+          <span x-show="!uploading && !traversing">Upload</span>
+          <span x-show="traversing">Reading folder...</span>
           <span x-show="uploading">Uploading...</span>
         </button>
         <div x-show="uploading" class="flex-1">
@@ -143,6 +146,9 @@
         <a :href="'/tasks/' + taskName + '/pick'" class="btn btn-primary">
           Continue to Pick Points &rarr;
         </a>
+        <a :href="'/tasks/' + taskName" class="btn btn-secondary">
+          Skip Pick Points &rarr;
+        </a>
         <button class="btn btn-secondary" @click="resetForm()">
           Upload Another
         </button>
@@ -161,6 +167,7 @@ function uploadForm() {
     fileTree: [],    // Visual tree
     totalFiles: 0,
     uploading: false,
+    traversing: false,
     progress: 0,
     error: '',
     success: '',
@@ -170,6 +177,7 @@ function uploadForm() {
     uploadResult: null,
 
     async handleDrop(e) {
+      this.error = '';
       const items = e.dataTransfer.items;
       if (!items) return;
       const entries = [];
@@ -177,16 +185,44 @@ function uploadForm() {
         const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
         if (entry) entries.push(entry);
       }
-      if (entries.length > 0) {
-        await this.traverseEntries(entries);
+      if (entries.length === 1 && entries[0].isDirectory) {
+        // Single top-level folder — enter it without its name in paths
+        this.traversing = true;
+        try {
+          const reader = entries[0].createReader();
+          const subEntries = await this.readAllEntries(reader);
+          await this.traverseEntries(subEntries, '');
+        } catch (err) {
+          this.error = 'Failed to read folder: ' + err.message;
+        } finally {
+          this.traversing = false;
+        }
+        this.buildTree();
+      } else if (entries.length > 0) {
+        this.traversing = true;
+        try {
+          await this.traverseEntries(entries);
+        } catch (err) {
+          this.error = 'Failed to read folder: ' + err.message;
+        } finally {
+          this.traversing = false;
+        }
+        this.buildTree();
       } else {
-        // Fallback: plain files
         this.addFiles(Array.from(e.dataTransfer.files));
       }
     },
 
     handleFolderSelect(e) {
-      this.addFiles(Array.from(e.target.files));
+      const files = Array.from(e.target.files);
+      for (const f of files) {
+        let path = f.webkitRelativePath || f.name;
+        const slashIdx = path.indexOf('/');
+        if (slashIdx !== -1) path = path.slice(slashIdx + 1);
+        f.relativePath = path;
+      }
+      this.files = [...this.files, ...files];
+      this.buildTree();
       e.target.value = '';
     },
 
