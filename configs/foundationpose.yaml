@@ -27,4 +27,10 @@ hunyuan:
     back: back.jpg
 real_size:
   longest_edge: 0.126
+detection_dataset:
+  class_name: mouse
+  class_id: 0
+  min_box_area: 16
+  copy_images: true
+  preview: false
 output_dir: output/

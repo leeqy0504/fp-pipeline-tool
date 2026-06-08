@@ -53,6 +53,15 @@ class FoundationPoseConfig:
 
 
 @dataclass
+class DetectionDatasetConfig:
+    class_name: str = "object"
+    class_id: int = 0
+    min_box_area: int = 16
+    copy_images: bool = True
+    preview: bool = False
+
+
+@dataclass
 class PipelineConfig:
     task: str
     preset: str
@@ -60,7 +69,8 @@ class PipelineConfig:
     sam2: Sam2Config
     hunyuan: HunyuanConfig
     real_size: RealSizeConfig
-    foundationpose: FoundationPoseConfig
+    foundationpose: FoundationPoseConfig = field(default_factory=FoundationPoseConfig)
+    detection_dataset: DetectionDatasetConfig = field(default_factory=DetectionDatasetConfig)
     output_dir: str = "output/"
 
 
@@ -132,6 +142,7 @@ def load_config(config_path: str) -> PipelineConfig:
         _validate_section(resolved, "real_size", _REQUIRED_REAL_SIZE)
 
     fp_data = resolved.get("foundationpose", {})
+    det_data = resolved.get("detection_dataset", {})
 
     return PipelineConfig(
         task=resolved["task"],
@@ -164,6 +175,13 @@ def load_config(config_path: str) -> PipelineConfig:
             container=fp_data.get("container", "foundationpose"),
             workdir=fp_data.get("workdir", "/home/vipuser/FoundationPose"),
             debug=fp_data.get("debug", 0),
+        ),
+        detection_dataset=DetectionDatasetConfig(
+            class_name=det_data.get("class_name", "object"),
+            class_id=det_data.get("class_id", 0),
+            min_box_area=det_data.get("min_box_area", 16),
+            copy_images=det_data.get("copy_images", True),
+            preview=det_data.get("preview", False),
         ),
         output_dir=resolved.get("output_dir", "output/"),
     )

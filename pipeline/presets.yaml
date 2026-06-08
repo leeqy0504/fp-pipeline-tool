@@ -5,3 +5,4 @@ foundationpose:
     - scale
     - package
     - foundationpose
+    - detection_dataset
