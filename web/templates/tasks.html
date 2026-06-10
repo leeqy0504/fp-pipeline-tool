@@ -5,6 +5,9 @@
 {% block head %}
 <style>
 .task-card {
+  position: relative;
+  min-height: 132px;
+  padding-bottom: 54px;
   transition: border-color 0.15s, transform 0.1s;
 }
 .task-card:hover { border-color: var(--accent); transform: translateY(-1px); }
@@ -13,8 +16,7 @@
 .task-meta { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 8px; }
 .task-meta span { margin-right: 12px; }
 .empty-state { text-align: center; padding: 80px 0; color: var(--text-muted); }
-.task-card-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
-.icon-trash::before { content: "\1F5D1"; font-size: 13px; line-height: 1; }
+.task-card-actions { position: absolute; right: 24px; bottom: 24px; }
 </style>
 {% endblock %}
 
