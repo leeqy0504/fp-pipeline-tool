@@ -101,7 +101,7 @@ async def api_logout():
 # ── Register API routers ───────────────────────────────────────
 
 
-from web.routes.tasks import router as tasks_router, _build_tasks_list
+from web.routes.tasks import router as tasks_router, _build_tasks_list, _load_stage_settings
 from web.routes.jobs import router as jobs_router
 from web.routes.configs import router as configs_router
 from web.routes.upload import router as upload_router
@@ -194,6 +194,7 @@ async def task_detail_page(task_name: str, request: Request):
         "task_name": task_name,
         "manifest": manifest,
         "running_job_id": running_job_id,
+        "stage_settings": _load_stage_settings(tasks_dir / task_name),
         "page": "tasks",
     })
 

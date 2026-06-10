@@ -38,16 +38,31 @@ class PipelineOrchestrator:
         return str(Path(config.output_dir) / config.task / stage_name)
 
     def run_preset(self, config: PipelineConfig, force: bool = False,
-                   context: "StageContext | None" = None):
+                   context: "StageContext | None" = None,
+                   enabled_stages: list[str] | None = None):
         stages = self.resolve_preset(config.preset)
+        enabled = set(enabled_stages) if enabled_stages is not None else None
 
         manifest_path = self._manifest_path(config)
         manifest = Manifest.load(manifest_path) if Path(manifest_path).exists() else Manifest(
             task=config.task,
             config_path=config.output_dir,
         )
+        if enabled is not None:
+            skipped = [name for name in stages if name not in enabled]
+            manifest.metadata["stage_selection"] = {
+                "preset": config.preset,
+                "enabled": [name for name in stages if name in enabled],
+                "skipped": skipped,
+            }
 
         for stage_name in stages:
+            if enabled is not None and stage_name not in enabled:
+                manifest.mark_stage_skipped(stage_name)
+                manifest.save(manifest_path)
+                print(f"[pipeline] {stage_name}: skipped")
+                continue
+
             if not force and manifest.is_stage_done(stage_name):
                 print(f"[pipeline] {stage_name}: skip (already done)")
                 continue

@@ -8,11 +8,18 @@ from pathlib import Path
 class Manifest:
     """Tracks per-stage status, output paths, and timing."""
 
-    def __init__(self, task: str, config_path: str, created_at: str | None = None):
+    def __init__(
+        self,
+        task: str,
+        config_path: str,
+        created_at: str | None = None,
+        metadata: dict | None = None,
+    ):
         self.task = task
         self.config_path = config_path
         self.created_at = created_at or datetime.now(timezone.utc).isoformat()
         self.stages: dict[str, dict] = {}
+        self.metadata = metadata or {}
 
     def mark_stage_done(self, name: str, output_dir: str, duration_s: float):
         self.stages[name] = {
@@ -26,6 +33,13 @@ class Manifest:
             "status": "failed",
             "output_dir": None,
             "duration_s": None,
+        }
+
+    def mark_stage_skipped(self, name: str):
+        self.stages[name] = {
+            "status": "skipped",
+            "output_dir": None,
+            "duration_s": 0,
         }
 
     def is_stage_done(self, name: str) -> bool:
@@ -44,6 +58,7 @@ class Manifest:
             "config_path": self.config_path,
             "created_at": self.created_at,
             "stages": self.stages,
+            "metadata": self.metadata,
         }
 
     @classmethod
@@ -54,6 +69,7 @@ class Manifest:
             task=data["task"],
             config_path=data["config_path"],
             created_at=data.get("created_at"),
+            metadata=data.get("metadata", {}),
         )
         m.stages = data.get("stages", {})
         return m

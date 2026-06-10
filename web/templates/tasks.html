@@ -1,33 +1,41 @@
 {% extends "base.html" %}
-{% block title %}Tasks — Pipeline UI{% endblock %}
+{% block title %}Task — Pipeline UI{% endblock %}
 {% set page = "tasks" %}
 
 {% block head %}
 <style>
 .task-card {
-  cursor: pointer;
   transition: border-color 0.15s, transform 0.1s;
 }
 .task-card:hover { border-color: var(--accent); transform: translateY(-1px); }
-.task-card a { color: inherit; text-decoration: none; display: block; }
+.task-card a { color: inherit; text-decoration: none; }
+.task-link { display: block; }
 .task-meta { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 8px; }
 .task-meta span { margin-right: 12px; }
 .empty-state { text-align: center; padding: 80px 0; color: var(--text-muted); }
+.task-card-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.icon-trash::before { content: "\1F5D1"; font-size: 13px; line-height: 1; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="flex justify-between items-center mb-16">
   <div>
-    <h1>Tasks</h1>
-    <p class="text-dim text-sm">Datasets and workspaces</p>
+    <h1>Task</h1>
+    <p class="text-dim text-sm">数据集与工作区</p>
   </div>
-  <span class="text-muted text-sm" id="poll-indicator">auto-refresh 5s</span>
+  <span class="text-muted text-sm" id="poll-indicator">每 5 秒自动刷新</span>
 </div>
+
+<div x-data="{type:'', message:''}"
+     x-init="document.addEventListener('task:notice', e => { type = e.detail.type; message = e.detail.message; setTimeout(() => message = '', 3500); })"
+     x-show="message"
+     :class="type === 'error' ? 'alert alert-error' : 'alert alert-success'"
+     x-text="message"></div>
 
 <div id="task-list"
      hx-get="/_/tasks-list"
-     hx-trigger="every 5s"
+     hx-trigger="every 5s, refresh from:body"
      hx-swap="innerHTML"
      hx-indicator="#poll-indicator">
   {% include "tasks_list.html" %}

@@ -31,6 +31,8 @@ class JobInfo:
     status: JobStatus = JobStatus.PENDING
     current_stage: str | None = None
     stages_completed: list[str] = field(default_factory=list)
+    stages_skipped: list[str] = field(default_factory=list)
+    stage_selection: dict | None = None
     asyncio_task: asyncio.Task | None = None
     process: Popen | None = None
     stop_event: threading.Event | None = None
@@ -57,10 +59,11 @@ class Scheduler:
     # ── Public API ────────────────────────────────────────────
 
     async def submit(self, task_name: str, preset: str,
-                     config_path: str | None = None) -> str:
+                     config_path: str | None = None,
+                     stage_selection: dict | None = None) -> str:
         job_id = uuid.uuid4().hex[:12]
         job = JobInfo(job_id=job_id, task_name=task_name, preset=preset,
-                       start_time=time.time())
+                       start_time=time.time(), stage_selection=stage_selection)
         async with self._lock:
             for existing in self._jobs.values():
                 if existing.task_name == task_name and existing.status == JobStatus.RUNNING:
@@ -112,6 +115,8 @@ class Scheduler:
             "preset": job.preset, "start_time": job.start_time,
             "status": job.status.value, "current_stage": job.current_stage,
             "stages_completed": job.stages_completed,
+            "stages_skipped": job.stages_skipped,
+            "stage_selection": job.stage_selection,
             "error_message": job.error_message, "end_time": job.end_time,
         }
 
@@ -167,17 +172,32 @@ class Scheduler:
             config = load_config(cfg_path)
             orch = PipelineOrchestrator()
             stages = orch.resolve_preset(job.preset)
+            enabled_stages = self._enabled_stages(stages, job.stage_selection)
+            skipped_stages = [stage for stage in stages if stage not in enabled_stages]
 
             manifest_dir = Path(config.output_dir) / config.task
             manifest_path = manifest_dir / "manifest.json"
             manifest = (Manifest.load(str(manifest_path)) if manifest_path.exists()
                         else Manifest(task=config.task, config_path=str(manifest_dir)))
+            manifest.metadata["stage_selection"] = {
+                "preset": job.preset,
+                "enabled": enabled_stages,
+                "skipped": skipped_stages,
+            }
+            manifest.save(str(manifest_path))
 
             loop = asyncio.get_running_loop()
 
             for stage_name in stages:
                 if job.status == JobStatus.STOPPED:
                     break
+                if stage_name not in enabled_stages:
+                    manifest.mark_stage_skipped(stage_name)
+                    manifest.save(str(manifest_path))
+                    job.stages_skipped.append(stage_name)
+                    await self.job_store.write_metadata(job.job_id, self._serialize_job(job))
+                    job_log.info("[INFO] Stage %s skipped", stage_name)
+                    continue
                 if manifest.is_stage_done(stage_name):
                     job_log.info("[%s] skip (already done)", stage_name)
                     job.stages_completed.append(stage_name)
@@ -203,6 +223,7 @@ class Scheduler:
                     manifest.mark_stage_done(stage_name, str(result_path), elapsed)
                     job.stages_completed.append(stage_name)
                     job_log.info("[%s] done (%.1fs)", stage_name, elapsed)
+                    job_log.info("[INFO] Stage %s completed", stage_name)
                 except Exception:
                     manifest.mark_stage_failed(stage_name)
                     manifest.save(str(manifest_path))
@@ -223,3 +244,15 @@ class Scheduler:
             for h in list(job_log.handlers):
                 h.close()
                 job_log.removeHandler(h)
+
+    @staticmethod
+    def _enabled_stages(stages: list[str], stage_selection: dict | None) -> list[str]:
+        if not stage_selection:
+            return list(stages)
+        enabled = stage_selection.get("enabled")
+        skipped = stage_selection.get("skipped", [])
+        if enabled is None:
+            skipped_set = set(skipped)
+            return [stage for stage in stages if stage not in skipped_set]
+        enabled_set = set(enabled)
+        return [stage for stage in stages if stage in enabled_set]

@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 from pipeline.manifest import Manifest
 
 
@@ -22,11 +20,17 @@ def test_manifest_mark_stage():
     assert m.stages["hunyuan"]["status"] == "failed"
     assert m.stages["hunyuan"]["output_dir"] is None
 
+    m.mark_stage_skipped("foundationpose")
+    assert m.stages["foundationpose"]["status"] == "skipped"
+    assert m.stages["foundationpose"]["output_dir"] is None
+    assert m.stages["foundationpose"]["duration_s"] == 0
+
 
 def test_manifest_save_load(tmp_path):
     path = tmp_path / "manifest.json"
 
     m1 = Manifest(task="test_task", config_path="configs/test.yaml")
+    m1.metadata["stage_selection"] = {"enabled": ["scale"], "skipped": ["package"]}
     m1.mark_stage_done("scale", "output/scale/", 2.0)
     m1.save(str(path))
 
@@ -37,6 +41,7 @@ def test_manifest_save_load(tmp_path):
     assert m2.stages["scale"]["status"] == "done"
     assert m2.stages["scale"]["output_dir"] == "output/scale/"
     assert m2.stages["scale"]["duration_s"] == 2.0
+    assert m2.metadata["stage_selection"]["skipped"] == ["package"]
 
 
 def test_manifest_is_stage_done():
@@ -57,3 +62,4 @@ def test_manifest_to_dict():
     assert d["task"] == "test"
     assert d["stages"]["scale"]["status"] == "done"
     assert "created_at" in d
+    assert "metadata" in d

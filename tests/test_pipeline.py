@@ -1,5 +1,4 @@
 import pytest
-from pathlib import Path
 from pipeline.pipeline import PipelineOrchestrator
 from pipeline.config import PipelineConfig, InputConfig, Sam2Config, HunyuanConfig, RealSizeConfig
 
@@ -49,3 +48,21 @@ def test_pipeline_manifest_path(tmp_path):
     orch = PipelineOrchestrator()
     path = orch._manifest_path(config)
     assert "my_task/manifest.json" in path
+
+
+def test_scheduler_enabled_stages_filters_in_preset_order():
+    from web.scheduler import Scheduler
+
+    stages = ["masks", "hunyuangen", "scale", "package"]
+    selection = {"enabled": ["package", "masks"]}
+
+    assert Scheduler._enabled_stages(stages, selection) == ["masks", "package"]
+
+
+def test_scheduler_enabled_stages_accepts_skipped_only():
+    from web.scheduler import Scheduler
+
+    stages = ["masks", "hunyuangen", "scale", "package"]
+    selection = {"skipped": ["scale"]}
+
+    assert Scheduler._enabled_stages(stages, selection) == ["masks", "hunyuangen", "package"]

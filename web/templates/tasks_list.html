@@ -3,37 +3,37 @@
 
 {% if tasks|length == 0 %}
 <div class="empty-state">
-  <p class="text-muted">No tasks found.</p>
-  <p class="text-muted text-sm">Use Upload to add task data.</p>
+  <p class="text-muted">暂无 Task。</p>
+  <p class="text-muted text-sm">使用 Upload 添加任务数据。</p>
 </div>
 {% else %}
 <div class="card-grid">
 {% for t in tasks %}
-  <div class="card task-card">
-    <a href="/tasks/{{ t.task_name }}">
+  <div class="card task-card"
+       data-task-name="{{ t.task_name }}"
+       x-data="{deleting:false,error:'',success:'', taskName: $el.dataset.taskName}">
+    <a href="/tasks/{{ t.task_name }}" class="task-link">
       <div class="flex justify-between items-center">
         <h3 style="margin:0">{{ t.task_name }}</h3>
         {% set has_manifest = t.manifest and t.manifest.stages %}
         {% if has_manifest %}
-          {% set all_done = true %}
-          {% set has_failed = false %}
-          {% set has_running = false %}
+          {% set ns = namespace(all_done=true, has_failed=false) %}
           {% for sname, sdata in t.manifest.stages.items() %}
-            {% if sdata.status != 'done' %}{% set all_done = false %}{% endif %}
-            {% if sdata.status == 'failed' %}{% set has_failed = true %}{% endif %}
+            {% if sdata.status not in ['done', 'skipped'] %}{% set ns.all_done = false %}{% endif %}
+            {% if sdata.status == 'failed' %}{% set ns.has_failed = true %}{% endif %}
           {% endfor %}
           {% set running = t.running_job_id %}
           {% if running %}
-            <span class="badge badge-running">RUNNING</span>
-          {% elif all_done %}
-            <span class="badge badge-completed">COMPLETED</span>
-          {% elif has_failed %}
-            <span class="badge badge-failed">FAILED</span>
+            <span class="badge badge-running">运行中</span>
+          {% elif ns.all_done %}
+            <span class="badge badge-completed">已完成</span>
+          {% elif ns.has_failed %}
+            <span class="badge badge-failed">失败</span>
           {% else %}
-            <span class="badge badge-idle">IDLE</span>
+            <span class="badge badge-idle">空闲</span>
           {% endif %}
         {% else %}
-          <span class="badge badge-idle">NO DATA</span>
+          <span class="badge badge-idle">无数据</span>
         {% endif %}
       </div>
       {% if has_manifest %}
@@ -45,13 +45,38 @@
       {% endif %}
       <div class="task-meta">
         {% if t.latest_job_id %}
-        <span>job: {{ t.latest_job_id[:8] }}</span>
+        <span>Job: {{ t.latest_job_id[:8] }}</span>
         {% endif %}
         {% if t.manifest and t.manifest.created_at %}
         <span>{{ t.manifest.created_at[:10] }}</span>
         {% endif %}
       </div>
     </a>
+    <div class="task-card-actions">
+      <button class="btn btn-danger btn-sm"
+              title="删除 Task"
+              :disabled="deleting"
+              @click.stop.prevent="
+                if (!confirm('确认删除 Task：' + taskName + '？\n\n将删除任务文件、结果和关联日志。此操作不可恢复。')) return;
+                deleting = true; error = ''; success = '';
+                fetch('/api/tasks/' + encodeURIComponent(taskName), {method:'DELETE'})
+                  .then(async r => {
+                    const d = await r.json().catch(() => ({}));
+                    if (!r.ok) throw new Error(d.detail || '删除失败');
+                    success = 'Task 已删除';
+                    document.dispatchEvent(new CustomEvent('task:notice', {detail:{type:'success', message:'Task ' + taskName + ' 已删除'}}));
+                    htmx.trigger(document.body, 'refresh');
+                  })
+                  .catch(e => {
+                    error = e.message;
+                    document.dispatchEvent(new CustomEvent('task:notice', {detail:{type:'error', message:e.message}}));
+                  })
+                  .finally(() => deleting = false);
+              ">
+        <span class="icon-trash" aria-hidden="true"></span>
+        <span x-text="deleting ? '删除中...' : 'Delete'"></span>
+      </button>
+    </div>
   </div>
 {% endfor %}
 </div>

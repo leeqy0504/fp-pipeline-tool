@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ task_name }} — Pipeline UI{% endblock %}
+{% block title %}{{ task_name }} - 任务详情{% endblock %}
 {% set page = "tasks" %}
 
 {% block head %}
@@ -11,15 +11,28 @@
   font-family: var(--font-mono); font-size: 12px;
 }
 .stage-row:last-child { border-bottom: none; }
-.stage-icon { font-size: 14px; flex-shrink: 0; }
-.stage-name { width: 140px; flex-shrink: 0; }
-.stage-status { width: 70px; flex-shrink: 0; }
+.stage-icon { font-size: 14px; flex-shrink: 0; width: 18px; }
+.stage-name { width: 170px; flex-shrink: 0; }
+.stage-status { width: 90px; flex-shrink: 0; }
 .stage-dur { color: var(--text-muted); font-size: 11px; }
-.job-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 6px 0; font-family: var(--font-mono); font-size: 12px;
-  border-bottom: 1px solid var(--border);
+.stage-toggle-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 12px;
+  align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border);
 }
+.stage-toggle-row:last-child { border-bottom: none; }
+.switch {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+}
+.switch input { width: 16px; height: 16px; accent-color: var(--accent); }
+.execution-flow { display: flex; flex-direction: column; gap: 8px; }
+.flow-item {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 12px;
+}
+.flow-item.skipped { color: var(--text-muted); }
+.detail-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.icon-trash::before { content: "\1F5D1"; font-size: 13px; line-height: 1; }
 </style>
 {% endblock %}
 
@@ -27,76 +40,83 @@
 <div class="flex justify-between items-center mb-16">
   <div>
     <h1>{{ task_name }}</h1>
-    <p class="text-dim text-sm">Pipeline task detail</p>
+    <p class="text-dim text-sm">任务详情</p>
   </div>
-  <a href="/tasks" class="btn btn-secondary btn-sm">&larr; Back to Tasks</a>
+  <a href="/tasks" class="btn btn-secondary btn-sm">&larr; 返回 Task</a>
 </div>
 
-{# ── Manifest section ── #}
-<div class="section" id="task-detail"
-     hx-get="/api/tasks/{{ task_name }}" hx-trigger="every 5s"
-     hx-swap="innerHTML show:none">
-
-  <h3>Stages</h3>
+<div class="section">
+  <h3>步骤状态</h3>
   <div class="card mb-16">
     {% if manifest and manifest.stages %}
     <div class="stage-list">
-      {% for sname in ["masks", "hunyuangen", "scale", "package", "foundationpose"] %}
-        {% set sdata = manifest.stages.get(sname) %}
+      {% for sname, sdata in manifest.stages.items() %}
         <div class="stage-row">
-          {% if sdata %}
-            {% if sdata.status == 'done' %}
-              <span class="stage-icon text-accent">&#x2713;</span>
-              <span class="stage-name">{{ sname }}</span>
-              <span class="badge badge-completed">DONE</span>
-              <span class="stage-dur">{{ "%.1fs"|format(sdata.duration_s) if sdata.duration_s else '' }}</span>
-            {% elif sdata.status == 'failed' %}
-              <span class="stage-icon text-red">&#x2717;</span>
-              <span class="stage-name">{{ sname }}</span>
-              <span class="badge badge-failed">FAILED</span>
-            {% else %}
-              <span class="stage-icon text-dim">&#x25CB;</span>
-              <span class="stage-name">{{ sname }}</span>
-              <span class="badge badge-pending">{{ sdata.status }}</span>
-            {% endif %}
-          {% else %}
-            <span class="stage-icon text-muted">&#x25CB;</span>
+          {% if sdata.status == 'done' %}
+            <span class="stage-icon text-accent">&#x2713;</span>
             <span class="stage-name">{{ sname }}</span>
-            <span class="badge badge-idle">PENDING</span>
+            <span class="badge badge-completed">已完成</span>
+            <span class="stage-dur">{{ "%.1fs"|format(sdata.duration_s) if sdata.duration_s else '' }}</span>
+          {% elif sdata.status == 'failed' %}
+            <span class="stage-icon text-red">&#x2717;</span>
+            <span class="stage-name">{{ sname }}</span>
+            <span class="badge badge-failed">失败</span>
+          {% elif sdata.status == 'skipped' %}
+            <span class="stage-icon text-muted">&#x2717;</span>
+            <span class="stage-name">{{ sname }}</span>
+            <span class="badge badge-idle">Skip</span>
+          {% else %}
+            <span class="stage-icon text-dim">&#x25CB;</span>
+            <span class="stage-name">{{ sname }}</span>
+            <span class="badge badge-pending">{{ sdata.status }}</span>
           {% endif %}
         </div>
       {% endfor %}
     </div>
     {% else %}
-    <p class="text-muted text-sm" style="padding:12px">No manifest data. Run the pipeline to create one.</p>
+    <p class="text-muted text-sm" style="padding:12px">暂无 manifest 数据。运行 Pipeline 后会生成步骤状态。</p>
     {% endif %}
   </div>
 </div>
 
-{# ── Actions ── #}
-<div class="section" x-data="taskActions" x-init="init($el)" data-task-name="{{ task_name }}" data-running-job-id="{{ running_job_id or '' }}">
-  <h3>Actions</h3>
+<div class="section"
+     x-data="taskActions"
+     x-init="init($el)"
+     data-task-name="{{ task_name }}"
+     data-running-job-id="{{ running_job_id or '' }}">
+  <h3>操作</h3>
   <div class="card">
     <div class="btn-group mb-12">
       <button class="btn btn-primary"
               @click="runJob()"
-              :disabled="running || submitting">
-        <span x-show="!submitting">Run Pipeline</span>
-        <span x-show="submitting">Submitting...</span>
+              :disabled="running || submitting || deleting || cloning">
+        <span x-text="submitting ? '提交中...' : '运行 Pipeline'"></span>
       </button>
       <button class="btn btn-danger"
               @click="stopJob()"
               :disabled="!running || submitting"
               x-show="running">
-        Stop Job
+        停止 Job
       </button>
       <a href="/tasks/{{ task_name }}/pick" class="btn btn-secondary">
-        Pick Points
+        标注点位
       </a>
       <button class="btn btn-secondary"
               @click="resetTask()"
               :disabled="running || submitting">
         Reset Manifest
+      </button>
+      <button class="btn btn-secondary"
+              @click="cloneTask()"
+              :disabled="submitting || deleting || cloning">
+        <span x-text="cloning ? '复制中...' : 'Clone Task'"></span>
+      </button>
+      <button class="btn btn-danger"
+              title="删除 Task"
+              @click="deleteTask()"
+              :disabled="running || submitting || deleting">
+        <span class="icon-trash" aria-hidden="true"></span>
+        <span x-text="deleting ? '删除中...' : 'Delete'"></span>
       </button>
     </div>
 
@@ -105,40 +125,76 @@
 
     <div x-show="currentJobId" class="text-sm text-muted" style="font-family:var(--font-mono)">
       Job: <span x-text="currentJobId" class="text-accent"></span>
-      <span x-show="jobStatus" x-text="' — ' + jobStatus"
-            :class="'badge badge-' + (jobStatus === 'running' ? 'running' : jobStatus === 'failed' ? 'failed' : 'completed')"></span>
+      <span x-show="jobStatus" x-text="' - ' + statusLabel(jobStatus)"
+            :class="'badge badge-' + (jobStatus === 'running' ? 'running' : jobStatus === 'failed' ? 'failed' : jobStatus === 'stopped' ? 'stopped' : 'completed')"></span>
     </div>
 
-    {# ── Preset selector ── #}
     <div class="form-group mt-8" style="max-width:240px">
       <label>Preset</label>
-      <select class="select" x-model="preset">
+      <select class="select" x-model="preset" @change="loadDefaultStages()">
         <option value="foundationpose">foundationpose</option>
       </select>
+    </div>
+
+    <div class="form-group">
+      <button class="btn btn-secondary btn-sm" @click="configOpen = !configOpen">
+        <span x-text="configOpen ? '收起配置' : '展开配置'"></span>
+      </button>
+    </div>
+
+    <div x-show="configOpen" x-transition class="mb-16">
+      <h3>Pipeline 步骤选择</h3>
+      <template x-for="stage in stages" :key="stage">
+        <div class="stage-toggle-row">
+          <div>
+            <div class="mono" x-text="stageLabel(stage)"></div>
+            <div class="text-muted text-sm" x-text="stage"></div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" :value="stage" x-model="enabledStages">
+            <span x-text="enabledStages.includes(stage) ? 'Enable' : 'Skip'"></span>
+          </label>
+        </div>
+      </template>
+      <div class="btn-group mt-8">
+        <button class="btn btn-secondary btn-sm" @click="saveStageSettings()" :disabled="savingSettings">
+          <span x-text="savingSettings ? '保存中...' : '保存配置'"></span>
+        </button>
+        <button class="btn btn-secondary btn-sm" @click="enableAllStages()">全部 Enable</button>
+      </div>
+    </div>
+
+    <h3>提交前执行流程</h3>
+    <div class="execution-flow">
+      <template x-for="stage in stages" :key="'flow-' + stage">
+        <div class="flow-item" :class="enabledStages.includes(stage) ? '' : 'skipped'">
+          <span x-text="enabledStages.includes(stage) ? '✓' : '✗'"></span>
+          <span x-text="stageLabel(stage)"></span>
+          <span x-show="!enabledStages.includes(stage)">(Skip)</span>
+        </div>
+      </template>
     </div>
   </div>
 </div>
 
-{# ── Job history link ── #}
 <div class="section">
-  <h3>Job History</h3>
+  <h3>Job 历史</h3>
   <div class="card">
-    <p class="text-sm text-dim mb-8">View all job runs for this task.</p>
+    <p class="text-sm text-dim mb-8">查看此 Task 的所有运行记录。</p>
     <a href="/history?task={{ task_name }}" class="btn btn-secondary btn-sm">
-      View Job History &rarr;
+      查看 Job 历史 &rarr;
     </a>
   </div>
 </div>
 
-{# ── WebSocket log terminal ── #}
 <div class="section">
-  <h3>Live Log</h3>
+  <h3>实时日志</h3>
   <div class="card" x-data="logTerminal()" x-init="init()">
     <div class="terminal-header">
       <span class="terminal-status" :class="wsState" x-text="wsLabel"></span>
     </div>
     <div class="terminal" id="logOutput" x-ref="output">
-      <div class="log-system">Connect to a running job to see live logs.</div>
+      <div class="log-system">连接到运行中的 Job 后显示实时日志。</div>
     </div>
   </div>
 </div>
@@ -152,10 +208,17 @@ function taskActions() {
     preset: 'foundationpose',
     running: false,
     submitting: false,
+    deleting: false,
+    cloning: false,
+    savingSettings: false,
     currentJobId: '',
     jobStatus: '',
     error: '',
     success: '',
+    configOpen: true,
+    stages: {{ (stage_settings.stages if stage_settings else ["masks", "hunyuangen", "scale", "package", "foundationpose", "detection_dataset"]) | tojson }},
+    enabledStages: {{ (stage_settings.enabled if stage_settings else ["masks", "hunyuangen", "scale", "package", "foundationpose", "detection_dataset"]) | tojson }},
+    labels: {{ (stage_settings.labels if stage_settings else {"masks":"分割","hunyuangen":"三维生成","scale":"尺度标定","package":"打包","foundationpose":"FoundationPose","detection_dataset":"检测数据集"}) | tojson }},
     _pollTimer: null,
 
     init(el) {
@@ -167,6 +230,15 @@ function taskActions() {
         this.jobStatus = 'running';
         this._startPolling();
       }
+      this.loadStageSettings();
+    },
+
+    stageLabel(stage) {
+      return this.labels[stage] || stage;
+    },
+
+    statusLabel(status) {
+      return {running:'运行中', completed:'已完成', failed:'失败', stopped:'已停止', pending:'等待中'}[status] || status;
     },
 
     _startPolling() {
@@ -192,20 +264,70 @@ function taskActions() {
       } catch(e) {}
     },
 
+    async loadStageSettings() {
+      try {
+        const r = await fetch(`/api/tasks/${this.taskName}/stage-settings`);
+        if (!r.ok) return;
+        const d = await r.json();
+        this.preset = d.preset || this.preset;
+        this.stages = d.stages || this.stages;
+        this.enabledStages = d.enabled || this.enabledStages;
+        this.labels = d.labels || this.labels;
+      } catch(e) {}
+    },
+
+    loadDefaultStages() {
+      this.enableAllStages();
+    },
+
+    enableAllStages() {
+      this.enabledStages = [...this.stages];
+    },
+
+    stageSelectionPayload() {
+      return {
+        preset: this.preset,
+        enabled: this.stages.filter(stage => this.enabledStages.includes(stage)),
+      };
+    },
+
+    async saveStageSettings() {
+      this.savingSettings = true; this.error = ''; this.success = '';
+      try {
+        const r = await fetch(`/api/tasks/${this.taskName}/stage-settings`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(this.stageSelectionPayload())
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '保存配置失败');
+        this.stages = d.stages;
+        this.enabledStages = d.enabled;
+        this.labels = d.labels || this.labels;
+        this.success = 'Pipeline 配置已保存';
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.savingSettings = false;
+      }
+    },
+
     async runJob() {
       this.submitting = true; this.error = ''; this.success = '';
       try {
+        await this.saveStageSettings();
+        if (this.error) throw new Error(this.error);
         const r = await fetch(`/api/tasks/${this.taskName}/run`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({preset: this.preset})
+          body: JSON.stringify({preset: this.preset, stage_selection: this.stageSelectionPayload()})
         });
         const d = await r.json();
-        if (!r.ok) throw new Error(d.detail || 'Submit failed');
+        if (!r.ok) throw new Error(d.detail || '提交失败');
         this.currentJobId = d.job_id;
         this.running = true;
         this.jobStatus = 'running';
-        this.success = `Job ${d.job_id} started`;
+        this.success = `Job ${d.job_id} 已启动`;
         this._startPolling();
         document.dispatchEvent(new CustomEvent('log:connect', {detail: {jobId: d.job_id}}));
       } catch(e) {
@@ -220,10 +342,10 @@ function taskActions() {
       this.submitting = true; this.error = '';
       try {
         const r = await fetch(`/api/jobs/${this.currentJobId}/stop`, {method: 'POST'});
-        if (!r.ok) throw new Error((await r.json()).detail || 'Stop failed');
+        if (!r.ok) throw new Error((await r.json()).detail || '停止失败');
         this.running = false;
         this.jobStatus = 'stopped';
-        this.success = 'Job stopped';
+        this.success = 'Job 已停止';
         this._stopPolling();
       } catch(e) {
         this.error = e.message;
@@ -233,12 +355,12 @@ function taskActions() {
     },
 
     async resetTask() {
-      if (!confirm('Reset manifest for "' + this.taskName + '"?\n\nThis ONLY deletes the manifest.json status file.\nOutput data, source files, and job history are NOT affected.')) return;
+      if (!confirm('确认 Reset "' + this.taskName + '" 的 manifest？\n\n只删除 manifest.json 状态文件，不删除源文件、输出数据和 Job 历史。')) return;
       this.submitting = true; this.error = '';
       try {
         const r = await fetch(`/api/tasks/${this.taskName}/reset`, {method: 'POST'});
-        if (!r.ok) throw new Error((await r.json()).detail || 'Reset failed');
-        this.success = 'Manifest deleted';
+        if (!r.ok) throw new Error((await r.json()).detail || 'Reset 失败');
+        this.success = 'Manifest 已删除';
         this.running = false;
         this.currentJobId = '';
         this.jobStatus = '';
@@ -248,6 +370,44 @@ function taskActions() {
       } finally {
         this.submitting = false;
       }
+    },
+
+    async deleteTask() {
+      if (!confirm('确认删除 Task：' + this.taskName + '？\n\n将删除任务文件、结果和关联日志。此操作不可恢复。')) return;
+      this.deleting = true; this.error = ''; this.success = '';
+      try {
+        const r = await fetch(`/api/tasks/${this.taskName}`, {method: 'DELETE'});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || '删除失败');
+        this.success = 'Task 已删除';
+        window.location.href = '/tasks';
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.deleting = false;
+      }
+    },
+
+    async cloneTask() {
+      const defaultName = `${this.taskName}-copy`;
+      const name = prompt('新 Task 名称', defaultName);
+      if (name === null) return;
+      this.cloning = true; this.error = ''; this.success = '';
+      try {
+        const r = await fetch(`/api/tasks/${this.taskName}/clone`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({task_name: name.trim() || null})
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Clone 失败');
+        this.success = `已创建 Task ${d.task_name}`;
+        window.location.href = `/tasks/${encodeURIComponent(d.task_name)}`;
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.cloning = false;
+      }
     }
   };
 }
@@ -255,7 +415,7 @@ function taskActions() {
 function logTerminal() {
   return {
     ws: null,
-    wsState: 'idle',       // idle | connected | completed | failed | stopped | reconnecting | disconnected
+    wsState: 'idle',
     wsLabel: 'IDLE',
     jobId: null,
     reconnectTimer: null,
@@ -273,7 +433,6 @@ function logTerminal() {
       this.reconnectAttempts = 0;
       this.wsState = 'connected';
       this.wsLabel = 'CONNECTED';
-      // Clear previous log content
       this.$refs.output.innerHTML = '';
       this._appendLog(`Connecting to job ${jobId}...`, 'log-system');
       this._doConnect();
@@ -290,23 +449,18 @@ function logTerminal() {
         this.wsLabel = 'CONNECTED';
         this.reconnectTimer = null;
         this.reconnectAttempts = 0;
-        // If job already finished before WS connected, pull log from disk
         setTimeout(() => this._checkJobStatus(), 500);
       };
 
       this.ws.onmessage = (e) => {
         const text = e.data;
         this._appendLog(text);
-        // Detect final job status from log
         if (text.includes('[JOB COMPLETED]'))  { this.wsState = 'completed';  this.wsLabel = 'COMPLETED'; }
         if (text.includes('[JOB FAILED]'))     { this.wsState = 'failed';     this.wsLabel = 'FAILED'; }
         if (text.includes('[JOB STOPPED]'))    { this.wsState = 'stopped';    this.wsLabel = 'STOPPED'; }
       };
 
-      this.ws.onclose = async (e) => {
-        // Always check job status first when WS closes.
-        // If job is done → show final state from disk, no reconnect.
-        // If job still running → reconnect.
+      this.ws.onclose = async () => {
         if (this.jobId && this.wsState === 'connected') {
           await this._checkJobStatus();
         }
@@ -326,18 +480,13 @@ function logTerminal() {
           this.wsLabel = 'DISCONNECTED';
           this._appendLog('[max reconnect attempts reached]', 'log-system');
         }
-        // If already in completed/failed/stopped state, do nothing —
-        // the terminal shows the final job status, not "disconnected".
       };
 
-      this.ws.onerror = () => {
-        // onclose will fire next, handle there
-      };
+      this.ws.onerror = () => {};
     },
 
     async _checkJobStatus() {
       if (!this.jobId) return;
-      // Retry up to 3 times — metadata may still be writing to disk
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const r = await fetch(`/api/history/${this.jobId}`);
@@ -345,12 +494,10 @@ function logTerminal() {
           const data = await r.json();
           const status = data.metadata?.status;
           if (!status || status === 'running') { await new Promise(r => setTimeout(r, 400)); continue; }
-          // Terminal state reached
           const stateMap = { completed: 'completed', failed: 'failed', stopped: 'stopped' };
           const labelMap = { completed: 'COMPLETED', failed: 'FAILED', stopped: 'STOPPED' };
           this.wsState = stateMap[status] || this.wsState;
           this.wsLabel = labelMap[status] || this.wsLabel;
-          // Show log from disk
           const log = data.log || '';
           if (log) {
             const existing = this.$refs.output.querySelectorAll('div').length;
@@ -358,31 +505,29 @@ function logTerminal() {
             for (let i = 0; i < lines.length; i++) {
               const line = lines[i].trim();
               if (!line) continue;
-              if (i < existing - 1) continue;
+              if (i < existing) continue;
               this._appendLog(line);
             }
           }
           return;
-        } catch(e) { /* retry */ }
+        } catch(e) {
+          await new Promise(r => setTimeout(r, 400));
+        }
       }
     },
 
     _appendLog(text, cls) {
-      const el = this.$refs.output;
-      const line = document.createElement('div');
-      let c = '';
-      if (cls) { c = cls; }
-      else if (text.includes('[ERROR') || text.includes('[CRITICAL')) { c = 'log-error'; }
-      else if (text.includes('[WARNING')) { c = 'log-warning'; }
-      else if (text.includes('[DEBUG')) { c = 'log-debug'; }
-      else if (text.includes('[JOB COMPLETED]')) { c = 'log-system'; }
-      else if (text.includes('[JOB FAILED]'))    { c = 'log-error'; }
-      else if (text.includes('[JOB STOPPED]'))   { c = 'log-warning'; }
-      else if (text.includes('[INFO')) { c = 'log-info'; }
-      line.className = c || 'log-info';
-      line.textContent = text;
-      el.appendChild(line);
-      el.scrollTop = el.scrollHeight;
+      const div = document.createElement('div');
+      if (!cls) {
+        if (text.includes('ERROR') || text.includes('failed')) cls = 'log-error';
+        else if (text.includes('WARNING') || text.includes('WARN')) cls = 'log-warning';
+        else if (text.includes('DEBUG')) cls = 'log-debug';
+        else cls = 'log-info';
+      }
+      div.className = cls;
+      div.textContent = text;
+      this.$refs.output.appendChild(div);
+      this.$refs.output.scrollTop = this.$refs.output.scrollHeight;
     }
   };
 }
