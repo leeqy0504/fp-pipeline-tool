@@ -1,2 +1,4 @@
-tencentcloud-sdk-python>=3.0
-pip install --upgrade tencentcloud-sdk-python-ai3d
+# Local Hunyuan3D multi-view stage dependencies are provided by the
+# Hunyuan3D-2 project environment, e.g. /home/try/code/Hunyuan3D-2.
+# Run the pipeline stage from that conda environment:
+#   conda activate hunyuan

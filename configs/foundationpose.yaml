@@ -14,12 +14,15 @@ sam2:
   labels:
   - 1
 hunyuan:
-  secret_id: ${TENCENT_SECRET_ID}
-  secret_key: ${TENCENT_SECRET_KEY}
-  region: ap-guangzhou
-  model: '3.1'
-  face_count: 50000
-  enable_pbr: false
+  model: tencent/Hunyuan3D-2mv
+  subfolder: hunyuan3d-dit-v2-mv
+  variant: fp16
+  num_inference_steps: 50
+  octree_resolution: 380
+  num_chunks: 20000
+  seed: 12345
+  output_type: trimesh
+  remove_background: true
   views:
     front: front.jpg
     left: left.jpg
