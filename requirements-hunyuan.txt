@@ -1,2 +1,2 @@
-tencentcloud-sdk-python>=3.0
-pip install --upgrade tencentcloud-sdk-python-ai3d
+requests>=2.31.0
+trimesh>=4.0.0

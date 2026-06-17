@@ -1,9 +1,10 @@
-"""Hunyuan 3D generation stage: submit/poll/download via tencentcloud SDK."""
+"""Hunyuan 3D generation stage: call a local Hunyuan3D API server."""
 
 import base64
 import logging
-import time
 from pathlib import Path
+
+import requests
 
 from pipeline.config import PipelineConfig
 from pipeline.stages import register_stage
@@ -11,23 +12,45 @@ from pipeline.stages.base import BaseStage, StageError
 from pipeline.stages.context import StageContext
 
 
-def _load_tencentcloud():
-    """Lazy-import tencentcloud SDK."""
+def _log(context: StageContext | None, level: int, message: str, *args):
+    if context:
+        context.log(level, message, *args)
+    else:
+        print("[hunyuangen] " + (message % args if args else message))
+
+
+def _image_to_base64(image_path: Path) -> str:
+    with open(image_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+
+def _convert_glb_to_obj(glb_path: Path, obj_path: Path) -> None:
     try:
-        from tencentcloud.common.credential import Credential
-        from tencentcloud.common.profile.client_profile import ClientProfile
-        from tencentcloud.common.profile.http_profile import HttpProfile
-        from tencentcloud.ai3d.v20250513 import ai3d_client, models
-        return Credential, ClientProfile, HttpProfile, ai3d_client, models
-    except ImportError:
+        import trimesh
+    except ImportError as exc:
         raise StageError(
-            "tencentcloud-sdk-python not installed. "
-            "Run: pip install pipeline-tool[hunyuan]"
-        )
+            "trimesh is required to convert local Hunyuan3D GLB output to OBJ. "
+            "Install dependencies with: pip install -r requirements.txt"
+        ) from exc
+
+    try:
+        mesh = trimesh.load(str(glb_path), force="scene")
+        mesh.export(str(obj_path))
+    except Exception as exc:
+        raise StageError(f"Failed to convert GLB to OBJ: {exc}") from exc
 
 
-_POLL_INTERVAL = 10   # seconds
-_MAX_WAIT = 1200       # 20 minutes timeout
+def _pick_front_image(config: PipelineConfig, views_dir: Path) -> Path:
+    front_name = config.hunyuan.views.get("front")
+    if front_name:
+        return views_dir / front_name
+
+    for candidate in ("front.png", "front.jpg", "front.jpeg"):
+        path = views_dir / candidate
+        if path.exists():
+            return path
+
+    raise StageError("No front view configured. Set hunyuan.views.front in the pipeline config.")
 
 
 @register_stage("hunyuangen")
@@ -38,131 +61,44 @@ class HunyuanGenStage(BaseStage):
             context: StageContext | None = None) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        Credential, ClientProfile, HttpProfile, ai3d_client, models = _load_tencentcloud()
-
         views_dir = Path(config.input.multi_views_dir)
         self.check_input_path(str(views_dir), "Multi-view images directory")
 
-        # Encode multi-view images
-        # 'front' is the default main view — used as ImageBase64, not in MultiViewImages
-        multi_view_images = []
-        front_b64 = None
+        image_path = _pick_front_image(config, views_dir)
+        self.check_input_path(str(image_path), "Front view image")
 
-        for view_name, filename in config.hunyuan.views.items():
-            img_path = views_dir / filename
-            self.check_input_path(str(img_path), f"View image ({view_name})")
-            with open(img_path, "rb") as f:
-                b64_data = base64.b64encode(f.read()).decode("utf-8")
+        host = config.hunyuan.api_host
+        port = config.hunyuan.api_port
+        timeout = config.hunyuan.api_timeout
+        url = f"http://{host}:{port}/generate"
 
-            if view_name == "front":
-                front_b64 = b64_data
-            else:
-                img = models.ViewImage()
-                img.ViewType = view_name
-                img.ViewImageBase64 = b64_data
-                multi_view_images.append(img)
+        _log(context, logging.INFO, "Calling local Hunyuan3D API: %s", url)
+        _log(context, logging.INFO, "Using front image: %s", image_path)
 
-        if front_b64 is None:
-            raise StageError("No 'front' view found in config — required as main image")
+        payload = {"image": _image_to_base64(image_path)}
+        try:
+            response = requests.post(url, json=payload, timeout=timeout)
+        except requests.RequestException as exc:
+            raise StageError(f"Local Hunyuan3D API request failed: {exc}") from exc
 
-        # Create credential and client
-        cred = Credential(config.hunyuan.secret_id, config.hunyuan.secret_key)
-        http_profile = HttpProfile(endpoint="ai3d.tencentcloudapi.com")
-        client_profile = ClientProfile(httpProfile=http_profile)
-        client = ai3d_client.Ai3dClient(cred, config.hunyuan.region, client_profile)
-
-        # Submit job
-        req = models.SubmitHunyuanTo3DProJobRequest()
-        req.Model = config.hunyuan.model
-        req.ImageBase64 = front_b64
-        req.MultiViewImages = multi_view_images
-        req.GenerateType = "Normal"
-        req.FaceCount = config.hunyuan.face_count
-        req.EnablePBR = config.hunyuan.enable_pbr
-
-        resp = client.SubmitHunyuanTo3DProJob(req)
-        job_id = resp.JobId
-        if context:
-            context.log(logging.INFO, "Job submitted: %s", job_id)
-        else:
-            print(f"[hunyuangen] Job submitted: {job_id}")
-
-        # Poll until complete
-        elapsed = 0
-        query_req = models.QueryHunyuanTo3DProJobRequest()
-        query_req.JobId = job_id
-
-        while elapsed < _MAX_WAIT:
-            time.sleep(_POLL_INTERVAL)
-            elapsed += _POLL_INTERVAL
-
-            query_resp = client.QueryHunyuanTo3DProJob(query_req)
-            status = query_resp.Status
-
-            if status in ("SUCCESS", "DONE"):
-                break
-            elif status == "FAILED":
-                raise StageError(
-                    f"Hunyuan job {job_id} failed: {query_resp.ErrorMessage}"
-                )
-
-            if context:
-                context.log(logging.INFO, "Polling... status=%s, elapsed=%ds", status, elapsed)
-            else:
-                print(f"[hunyuangen] Polling... status={status}, elapsed={elapsed}s")
-
-        if elapsed >= _MAX_WAIT:
-            raise StageError(f"Hunyuan job {job_id} timed out after {_MAX_WAIT}s")
-
-        # Download result
-        import urllib.request
-        import zipfile
-        import io
-
-        result_files = getattr(query_resp, "ResultFile3Ds", None)
-        if not result_files:
+        if response.status_code != 200:
             raise StageError(
-                f"Job {job_id} completed but no ResultFile3Ds in response"
+                "Local Hunyuan3D API failed "
+                f"(status={response.status_code}): {response.text[:500]}"
             )
+        if not response.content:
+            raise StageError("Local Hunyuan3D API returned empty content")
 
-        # Prefer OBJ, fall back to first available
-        dl_file = None
-        for f in result_files:
-            if f.Type == "obj":
-                dl_file = f
-                break
-        if dl_file is None:
-            dl_file = result_files[0]
+        glb_path = output_dir / "result.glb"
+        glb_path.write_bytes(response.content)
+        _log(context, logging.INFO, "Saved GLB: %s (%.2f MB)",
+             glb_path, glb_path.stat().st_size / 1024 / 1024)
 
-        dl_path = output_dir / f"result.{dl_file.Type}"
-        urllib.request.urlretrieve(dl_file.Url, str(dl_path))
-        if context:
-            context.log(logging.INFO, "Downloaded %s (%d bytes)", dl_file.Type, dl_path.stat().st_size)
-        else:
-            print(f"[hunyuangen] Downloaded {dl_file.Type} ({dl_path.stat().st_size} bytes)")
+        raw_obj_path = output_dir / "raw.obj"
+        _convert_glb_to_obj(glb_path, raw_obj_path)
+        if not raw_obj_path.exists():
+            raise StageError(f"OBJ conversion completed but file is missing: {raw_obj_path}")
 
-        # Check if result is a ZIP bundle — extract and find the OBJ
-        if zipfile.is_zipfile(dl_path):
-            with zipfile.ZipFile(dl_path) as zf:
-                zf.extractall(output_dir)
-            dl_path.unlink()  # remove the zip
-
-            obj_files = list(output_dir.glob("*.obj"))
-            if not obj_files:
-                raise StageError("ZIP extracted but no .obj file found inside")
-
-            # Rename first OBJ to obj.obj
-            obj_files[0].rename(output_dir / "raw.obj")
-            if context:
-                context.log(logging.INFO, "Extracted OBJ + textures to %s", output_dir)
-            else:
-                print(f"[hunyuangen] Extracted OBJ + textures to {output_dir}")
-        else:
-            # Plain file — rename to obj.obj
-            dl_path.rename(output_dir / "raw.obj")
-
-        if context:
-            context.log(logging.INFO, "Done: %s", output_dir)
-        else:
-            print(f"[hunyuangen] Done: {output_dir}")
+        _log(context, logging.INFO, "Saved OBJ: %s", raw_obj_path)
+        _log(context, logging.INFO, "Done: %s", output_dir)
         return output_dir

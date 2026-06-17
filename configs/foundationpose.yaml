@@ -14,12 +14,9 @@ sam2:
   labels:
   - 1
 hunyuan:
-  secret_id: ${TENCENT_SECRET_ID}
-  secret_key: ${TENCENT_SECRET_KEY}
-  region: ap-guangzhou
-  model: '3.1'
-  face_count: 50000
-  enable_pbr: false
+  api_host: localhost
+  api_port: 8081
+  api_timeout: 300
   views:
     front: front.jpg
     left: left.jpg

@@ -31,13 +31,16 @@ class Sam2Config:
 
 @dataclass
 class HunyuanConfig:
-    secret_id: str
-    secret_key: str
+    secret_id: str = ""
+    secret_key: str = ""
     region: str = "ap-guangzhou"
     model: str = "3.1"
     face_count: int = 500000
     enable_pbr: bool = False
     views: dict[str, str] = field(default_factory=dict)
+    api_host: str = "localhost"
+    api_port: int = 8081
+    api_timeout: int = 300
 
 
 @dataclass
@@ -98,7 +101,7 @@ def _resolve_env_vars(value):
 _REQUIRED_TOP = ["task", "preset", "input", "sam2"]
 _REQUIRED_INPUT = ["rgbd_dir", "multi_views_dir"]
 _REQUIRED_SAM2 = ["container", "points", "labels"]
-_REQUIRED_HUNYUAN = ["secret_id", "secret_key", "views"]
+_REQUIRED_HUNYUAN = ["views"]
 _REQUIRED_REAL_SIZE = ["longest_edge"]
 
 
@@ -167,6 +170,9 @@ def load_config(config_path: str) -> PipelineConfig:
             face_count=hunyuan_data.get("face_count", 500000),
             enable_pbr=hunyuan_data.get("enable_pbr", False),
             views=hunyuan_data.get("views", {}),
+            api_host=hunyuan_data.get("api_host", "localhost"),
+            api_port=hunyuan_data.get("api_port", 8081),
+            api_timeout=hunyuan_data.get("api_timeout", 300),
         ),
         real_size=RealSizeConfig(
             longest_edge=real_size_data.get("longest_edge", 1.0),
