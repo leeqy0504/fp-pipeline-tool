@@ -46,6 +46,9 @@ class HunyuanConfig:
     seed: int = 12345
     output_type: str = "trimesh"
     remove_background: bool = True
+    conda_env: str = "hunyuan"
+    project_dir: str = "/home/try/code/Hunyuan3D-2"
+    python: str = ""
 
 
 @dataclass
@@ -56,7 +59,7 @@ class RealSizeConfig:
 @dataclass
 class FoundationPoseConfig:
     container: str = "foundationpose"
-    workdir: str = "/home/vipuser/FoundationPose"
+    workdir: str = "/home/try/code/FoundationPose"
     debug: int = 0
 
 
@@ -183,13 +186,16 @@ def load_config(config_path: str) -> PipelineConfig:
             seed=hunyuan_data.get("seed", 12345),
             output_type=hunyuan_data.get("output_type", "trimesh"),
             remove_background=hunyuan_data.get("remove_background", True),
+            conda_env=hunyuan_data.get("conda_env", "hunyuan"),
+            project_dir=hunyuan_data.get("project_dir", "/home/try/code/Hunyuan3D-2"),
+            python=hunyuan_data.get("python", ""),
         ),
         real_size=RealSizeConfig(
             longest_edge=real_size_data.get("longest_edge", 1.0),
         ),
         foundationpose=FoundationPoseConfig(
             container=fp_data.get("container", "foundationpose"),
-            workdir=fp_data.get("workdir", "/home/vipuser/FoundationPose"),
+            workdir=fp_data.get("workdir", "/home/try/code/FoundationPose"),
             debug=fp_data.get("debug", 0),
         ),
         detection_dataset=DetectionDatasetConfig(
