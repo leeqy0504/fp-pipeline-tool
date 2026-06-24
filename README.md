@@ -34,17 +34,18 @@ pip install -r requirements-dev.txt
 ## 快速开始
 
 ```bash
-# 1. 用已有采集数据初始化配置
-./run.sh setup --config configs/foundationpose.yaml --task mouse002
+# 1. 在 Web 上上传/选择 Task 后进入配置页
+WEB_PASSWORD=your-password ./run.sh web
+# 打开 /configs，只配置 Pipeline、目标类别、步骤 Enable/Skip、点位和真实尺寸
 
-# 2. 运行完整流水线
-./run.sh run --config configs/foundationpose.yaml
+# 2. 或者直接使用 Task 级配置运行
+./run.sh run --config tasks/mouse002/task.yaml
 
 # 3. 查看进度
-./run.sh status --config configs/foundationpose.yaml
+./run.sh status --config tasks/mouse002/task.yaml
 
 # 4. 单独重跑某个阶段
-./run.sh stage package --config configs/foundationpose.yaml --force
+./run.sh stage package --config tasks/mouse002/task.yaml --force
 ```
 
 ## CLI 命令
@@ -53,16 +54,22 @@ pip install -r requirements-dev.txt
 pipeline run [preset] --config <path> [--force]   # 运行预设流水线
 pipeline stage <name> --config <path> [--force]    # 运行单个阶段
 pipeline status --config <path>                    # 查看任务状态
-pipeline setup --config <path> --task <name>        # 用 dataset_info.json 更新配置
 ```
 
 ## 配置文件
 
-单 YAML 文件贯穿全流程，支持 `${ENV_VAR}` 环境变量解析：
+根级 `configs/foundationpose.yaml` 已退役。当前配置分为两层：
+
+- `tasks/<task>/task.yaml`：业务配置，记录 Task、Pipeline、类别、输入目录、SAM2 点位、真实尺寸。
+- `configs/pipelines/*.yaml`、`configs/algorithms/*.yaml`、`configs/runtime/*.yaml`：平台配置，记录阶段顺序、算法默认参数和服务器运行环境。普通用户不需要在 Web 上编辑这些字段。
+
+Task 配置示例：
 
 ```yaml
-task: mouse002
-preset: foundationpose
+task_id: mouse002
+pipeline: pose6d
+runtime: server
+class_id: 0
 
 input:
   rgbd_dir: ./tasks/mouse002/
@@ -70,34 +77,20 @@ input:
   first_frame: 0
 
 sam2:
-  container: sam2-backend-1
-  checkpoint: /path/to/sam2.pt
-  config_file: /path/to/sam2.yaml
   points:
     - [326, 258]
   labels: [1]
 
-hunyuan:
-  secret_id: ${TENCENT_SECRET_ID}
-  secret_key: ${TENCENT_SECRET_KEY}
-  region: ap-guangzhou
-  model: "3.1"
-  face_count: 50000
-  enable_pbr: false
-  views:
-    front: front.jpg
-    left: left.jpg
-    right: right.jpg
-    back: back.jpg
-
 real_size:
   longest_edge: 0.126  # 米，物体的最长边
 
-foundationpose:
-  container: foundationpose
-  debug: 0
-
 output_dir: output/
+```
+
+验证新配置结构：
+
+```bash
+PYTHONPATH=. python -c 'from pipeline.config import load_config; c=load_config("tasks/mouse002/task.yaml", project_root="."); print(c.task, c.preset, c.sam2.points)'
 ```
 
 ## 架构
@@ -121,23 +114,21 @@ pipeline/
 核心设计：
 - **Stage 注册表模式** — `@register_stage("name")` 装饰器，加新阶段只需继承 `BaseStage` 并注册
 - **Manifest 断点续跑** — 每个阶段完成后记录到 JSON manifest，失败/中断后跳过已完成阶段
-- **Preset 编排** — `presets.yaml` 定义阶段序列，一个命令跑完整流程
-- **配置驱动** — `setup` 命令自动从采集产物的 `dataset_info.json` 填充配置
+- **Pipeline 编排** — `configs/pipelines/*.yaml` 定义阶段序列，一个命令跑完整流程
+- **配置分层** — Task 级业务配置和平台级运行配置分离，Web 配置页只暴露业务决策
 
 ## 输出目录结构
 
 ```
 output/<task>/
-├── manifest.json
-├── masks/
-│   └── 00000.png
-├── hunyuangen/
-│   └── obj.obj
-├── scale/
-│   └── obj.obj
-├── package/
-│   ├── rgb/00000.png ... 00079.png
-│   ├── depth/00000.png ... 00079.png
+└── runs/<run_id>/
+    ├── resolved_config.yaml
+    ├── manifest.json
+    └── stages/
+        ├── masks/
+        ├── hunyuangen/
+        ├── scale/
+        ├── package/
 │   ├── masks/00000.png
 │   ├── mesh/textured_simple.obj
 │   ├── cam_K.txt
@@ -207,8 +198,8 @@ pytest tests/test_e2e_bottle.py -v
     2. rsync 上传 — 将本地 cam_data/<task>/ 增量同步到服务器
        /home/vipuser/pipeline-tool/tasks/<task>/，显示文件数和总大小。
 
-    3. 远程 setup — 在服务器上执行 pipeline setup，将 task 名、rgbd_dir、views_dir
-       以及 dataset_info.json 中的 sam2 选点和 real_size 自动填入服务器端 config。
+    3. 远程 setup — 在服务器上执行 pipeline setup --task <task>，生成或更新
+       tasks/<task>/task.yaml，并从 dataset_info.json 填入 sam2 选点和 real_size。
 
     4. 依次触发 pipeline 阶段 — 通过 SSH 远程执行 run.sh stage，按顺序跑
        ① masks → ② hunyuangen → ③ scale → ④ package → ⑤ foundationpose，

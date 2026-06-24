@@ -95,3 +95,38 @@ def test_load_stage_settings_reads_saved_json(tmp_path):
 
     assert settings["preset"] == "pose6d"
     assert settings["enabled"] == ["masks"]
+
+
+def test_ensure_task_yaml_uses_dataset_info(tmp_path):
+    from pipeline.config import load_config
+    from web.routes.tasks import _ensure_task_yaml
+    from tests.test_business_config import _write_platform_files
+
+    _write_platform_files(tmp_path)
+    task_dir = tmp_path / "tasks" / "mouse02"
+    task_dir.mkdir(parents=True)
+    (task_dir / "dataset_info.json").write_text(
+        '{"sam2_points":{"points":[[9,8]],"labels":[1]},"real_size":{"longest_edge":0.42}}',
+        encoding="utf-8",
+    )
+
+    task_yaml = _ensure_task_yaml(tmp_path, "mouse02")
+    config = load_config(str(task_yaml), project_root=tmp_path)
+
+    assert task_yaml.name == "task.yaml"
+    assert config.task == "mouse02"
+    assert config.preset == "pose6d"
+    assert config.sam2.points == [[9, 8]]
+    assert config.real_size.longest_edge == 0.42
+    assert config.hunyuan.project_dir == "/home/try/code/Hunyuan3D-2"
+
+
+def test_scheduler_requires_task_config_when_no_config_path():
+    from web.scheduler import Scheduler
+
+    try:
+        Scheduler._resolve_config_path(None)
+    except ValueError as exc:
+        assert "task.yaml" in str(exc)
+    else:
+        raise AssertionError("Expected missing config path to fail")

@@ -27,6 +27,7 @@ class StageSettingsRequest(BaseModel):
 class CloneRequest(BaseModel):
     task_name: str | None = None
 
+
 def _tasks_dir(request: Request) -> Path:
     return _project_root(request) / "tasks"
 
@@ -53,6 +54,50 @@ def _task_config_path(task_path: Path) -> Path:
 
 def _task_yaml_path(task_path: Path) -> Path:
     return task_path / "task.yaml"
+
+
+def _ensure_task_yaml(project_root: Path, task_name: str) -> Path:
+    import yaml
+
+    task_path = project_root / "tasks" / task_name
+    path = _task_yaml_path(task_path)
+    if path.exists():
+        return path
+
+    info_path = task_path / "dataset_info.json"
+    info = {}
+    if info_path.exists():
+        try:
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.warning("Failed to read dataset_info for task '%s'", task_name, exc_info=True)
+
+    sam2_points = info.get("sam2_points", {})
+    real_size = info.get("real_size", {})
+    data = {
+        "task_id": task_name,
+        "pipeline": "pose6d",
+        "runtime": "server",
+        "class_id": 0,
+        "input": {
+            "rgbd_dir": f"./tasks/{task_name}/",
+            "multi_views_dir": f"./tasks/{task_name}/views/",
+            "first_frame": 0,
+        },
+        "sam2": {
+            "points": sam2_points.get("points", []),
+            "labels": sam2_points.get("labels", []),
+        },
+        "real_size": {
+            "longest_edge": real_size.get("longest_edge", 1.0),
+        },
+        "output_dir": "output/",
+    }
+    path.write_text(
+        yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _load_stage_settings(task_path: Path) -> dict | None:
@@ -112,10 +157,11 @@ def _default_clone_name(source_name: str, tasks_dir: Path) -> str:
     return candidate
 
 
-def _resolve_stage_settings(preset: str, enabled: list[str]) -> dict:
-    from pipeline.pipeline import PipelineOrchestrator
+def _resolve_stage_settings(preset: str, enabled: list[str], stages: list[str] | None = None) -> dict:
+    if stages is None:
+        from pipeline.pipeline import PipelineOrchestrator
 
-    stages = PipelineOrchestrator().resolve_preset(preset)
+        stages = PipelineOrchestrator().resolve_preset(preset)
     stage_set = set(stages)
     unknown = [stage for stage in enabled if stage not in stage_set]
     if unknown:
@@ -135,25 +181,19 @@ def _write_task_config_snapshot(project_root: Path, source_path: Path, dest_path
     import yaml
 
     source_config = _task_yaml_path(source_path)
-    dest_config = _task_yaml_path(dest_path)
     if not source_config.exists():
-        source_config = _task_config_path(source_path)
-        dest_config = _task_config_path(dest_path)
-    if not source_config.exists():
-        source_config = project_root / "configs" / "foundationpose.yaml"
-    if not source_config.exists():
-        return
+        source_config = _ensure_task_yaml(project_root, source_path.name)
 
     config = yaml.safe_load(source_config.read_text(encoding="utf-8")) or {}
-    if "task_id" in config or "pipeline" in config:
-        config["task_id"] = new_name
-    else:
-        config["task"] = new_name
+    config["task_id"] = new_name
+    config.pop("task", None)
+    config.setdefault("pipeline", "pose6d")
+    config.setdefault("runtime", "server")
     input_config = config.setdefault("input", {})
     input_config["rgbd_dir"] = f"./tasks/{new_name}/"
     input_config["multi_views_dir"] = f"./tasks/{new_name}/views/"
 
-    dest_config.write_text(
+    _task_yaml_path(dest_path).write_text(
         yaml.dump(config, default_flow_style=False, allow_unicode=True),
         encoding="utf-8",
     )
@@ -318,7 +358,7 @@ async def run_task(task_name: str, body: RunRequest, request: Request):
         if not task_path.is_dir():
             raise HTTPException(404, f"Task '{task_name}' not found")
         config_path = body.config_path
-        local_config = _task_yaml_path(task_path)
+        local_config = _ensure_task_yaml(_project_root(request), task_name)
         if not local_config.exists():
             local_config = _task_config_path(task_path)
         if config_path is None and local_config.exists():

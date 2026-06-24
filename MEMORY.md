@@ -117,8 +117,8 @@ output/{task_name}/
 ./upload.sh data/mouse001 -y
 
 # 单步重新跑
-bash run.sh stage foundationpose --config configs/foundationpose.yaml --force
+bash run.sh stage foundationpose --config tasks/mouse001/task.yaml --force
 
 # 查看状态
-bash run.sh status --config configs/foundationpose.yaml
+bash run.sh status --config tasks/mouse001/task.yaml
 ```

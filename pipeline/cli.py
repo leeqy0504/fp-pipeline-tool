@@ -1,6 +1,7 @@
 """CLI entry point for the pipeline tool."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from pipeline.pipeline import PipelineOrchestrator
 
 
 def cmd_run(args):
-    config = load_config(args.config)
+    config = load_config(args.config, project_root=Path.cwd())
     if args.preset:
         config.preset = args.preset
 
@@ -20,67 +21,77 @@ def cmd_run(args):
 
 
 def cmd_stage(args):
-    config = load_config(args.config)
+    config = load_config(args.config, project_root=Path.cwd())
 
     orch = PipelineOrchestrator()
     orch.run_stage(config, args.stage_name, force=args.force)
 
 
 def cmd_status(args):
-    config = load_config(args.config)
+    config = load_config(args.config, project_root=Path.cwd())
 
     orch = PipelineOrchestrator()
     orch.status(config)
 
 
 def cmd_setup(args):
-    config_path = Path(args.config)
-    if not config_path.exists():
-        print(f"Config file not found: {args.config}", file=sys.stderr)
-        sys.exit(1)
-
-    with open(config_path) as f:
-        raw = yaml.safe_load(f)
-
     task_name = args.task
+    project_root = Path(args.project_root).resolve()
+    task_dir = project_root / "tasks" / task_name
 
-    task_dir = config_path.parent.parent / "tasks" / task_name
     if not task_dir.is_dir():
         print(f"Error: Task directory not found: {task_dir}", file=sys.stderr)
         sys.exit(1)
 
-    raw["task"] = task_name
-    raw["input"]["rgbd_dir"] = f"./tasks/{task_name}/"
-    raw["input"]["multi_views_dir"] = f"./tasks/{task_name}/views/"
+    info_path = task_dir / "dataset_info.json"
+    info = {}
+    if info_path.exists():
+        with open(info_path) as f:
+            info = json.load(f)
 
-    # 从 dataset_info.json 更新 sam2 points/labels 和 real_size
-    for ds_path in [task_dir / "dataset_info.json"]:
-        if ds_path.exists():
-            import json
-            with open(ds_path) as f:
-                ds = json.load(f)
-            sam2_data = ds.get("sam2_points", {})
-            pts = sam2_data.get("points", [])
-            lbls = sam2_data.get("labels", [])
-            if pts and lbls and len(pts) == len(lbls):
-                raw["sam2"]["points"] = pts
-                raw["sam2"]["labels"] = lbls
-                print(f"  sam2 pts   -> {pts} (from {ds_path})")
-            else:
-                print(f"  [warn] dataset_info.json found but sam2_points invalid, keeping config defaults")
-            # real_size
-            rs = ds.get("real_size")
-            if rs:
-                raw["real_size"] = rs
-                print(f"  real_size  -> {rs} (from {ds_path})")
-            break
+    existing_path = task_dir / "task.yaml"
+    existing = {}
+    if existing_path.exists():
+        existing = yaml.safe_load(existing_path.read_text(encoding="utf-8")) or {}
 
-    with open(config_path, "w") as f:
-        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    sam2_data = info.get("sam2_points", {})
+    real_size = info.get("real_size", {})
+    data = {
+        **existing,
+        "task_id": task_name,
+        "pipeline": existing.get("pipeline", args.pipeline),
+        "runtime": existing.get("runtime", args.runtime),
+        "class_id": int(existing.get("class_id", args.class_id)),
+        "input": {
+            **existing.get("input", {}),
+            "rgbd_dir": f"./tasks/{task_name}/",
+            "multi_views_dir": f"./tasks/{task_name}/views/",
+            "first_frame": int(existing.get("input", {}).get("first_frame", 0)),
+        },
+        "sam2": {
+            **existing.get("sam2", {}),
+            "points": sam2_data.get("points", existing.get("sam2", {}).get("points", [])),
+            "labels": sam2_data.get("labels", existing.get("sam2", {}).get("labels", [])),
+        },
+        "real_size": {
+            **existing.get("real_size", {}),
+            "longest_edge": real_size.get(
+                "longest_edge",
+                existing.get("real_size", {}).get("longest_edge", 1.0),
+            ),
+        },
+        "output_dir": existing.get("output_dir", "output/"),
+    }
 
-    print(f"Config updated: task={task_name}")
+    existing_path.write_text(
+        yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    print(f"Task config written: {existing_path}")
     print(f"  rgbd_dir   -> ./tasks/{task_name}/")
     print(f"  views_dir  -> ./tasks/{task_name}/views/")
+    print(f"  pipeline   -> {data['pipeline']}")
 
 
 def main():
@@ -109,10 +120,13 @@ def main():
     status_parser.add_argument("--config", required=True, help="Path to YAML config file")
     status_parser.set_defaults(func=cmd_status)
 
-    # pipeline setup --config <path> --task <name>
-    setup_parser = subparsers.add_parser("setup", help="Update config with a new task")
-    setup_parser.add_argument("--config", required=True, help="Path to YAML config file")
+    # pipeline setup --task <name>
+    setup_parser = subparsers.add_parser("setup", help="Create or update tasks/<task>/task.yaml")
     setup_parser.add_argument("--task", required=True, help="Task name")
+    setup_parser.add_argument("--pipeline", default="pose6d", help="Pipeline id")
+    setup_parser.add_argument("--runtime", default="server", help="Runtime id")
+    setup_parser.add_argument("--class-id", type=int, default=0, help="Target class id")
+    setup_parser.add_argument("--project-root", default=".", help="Project root")
     setup_parser.set_defaults(func=cmd_setup)
 
     args = parser.parse_args()

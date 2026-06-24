@@ -216,8 +216,6 @@ async def save_points(task_name: str, request: Request):
 
 @router.post("/tasks/{task_name}/setup-config")
 async def setup_config(task_name: str, request: Request):
-    import yaml
-
     tasks_dir = _project_root(request) / "tasks" / task_name
     info_path = tasks_dir / "dataset_info.json"
 
@@ -225,34 +223,10 @@ async def setup_config(task_name: str, request: Request):
         raise HTTPException(400, "No dataset_info.json found. Upload data and save points first.")
 
     info = json.loads(info_path.read_text(encoding="utf-8"))
-
-    configs_dir = _project_root(request) / "configs"
-    config_path = configs_dir / "foundationpose.yaml"
-
-    if not config_path.exists():
-        raise HTTPException(404, "Config file foundationpose.yaml not found")
-
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-
-    # Update config fields from dataset_info
-    config["task"] = task_name
-    config["input"]["rgbd_dir"] = f"./tasks/{task_name}/"
-    config["input"]["multi_views_dir"] = f"./tasks/{task_name}/views/"
-
-    sp = info.get("sam2_points", {})
-    config["sam2"]["points"] = sp.get("points", [])
-    config["sam2"]["labels"] = sp.get("labels", [])
-
-    rs = info.get("real_size", {})
-    if rs.get("longest_edge"):
-        config["real_size"]["longest_edge"] = rs["longest_edge"]
-
-    config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True),
-                           encoding="utf-8")
     task_yaml = _write_task_yaml(_project_root(request), task_name, info)
-    logger.info("Config updated for task '%s'", task_name)
+    logger.info("Task config updated for task '%s'", task_name)
 
-    return {"detail": "ok", "config": str(config_path), "task_config": str(task_yaml)}
+    return {"detail": "ok", "task_config": str(task_yaml)}
 
 
 # ── Combined save + setup (transactional) ─────────────────────
@@ -260,9 +234,8 @@ async def setup_config(task_name: str, request: Request):
 
 @router.post("/tasks/{task_name}/save-and-setup")
 async def save_and_setup(task_name: str, request: Request):
-    """Save points and update config in a single transactional call."""
+    """Save points and update task.yaml in a single transactional call."""
     from pydantic import BaseModel
-    import yaml
 
     class PointsBody(BaseModel):
         points: list[list[int]] = []
@@ -281,11 +254,6 @@ async def save_and_setup(task_name: str, request: Request):
     tasks_dir = _project_root(request) / "tasks" / task_name
     if not tasks_dir.is_dir():
         raise HTTPException(404, f"Task '{task_name}' not found")
-
-    configs_dir = _project_root(request) / "configs"
-    config_path = configs_dir / "foundationpose.yaml"
-    if not config_path.exists():
-        raise HTTPException(404, "Config file foundationpose.yaml not found")
 
     # Step 1: Save points to dataset_info.json
     info_path = tasks_dir / "dataset_info.json"
@@ -308,29 +276,12 @@ async def save_and_setup(task_name: str, request: Request):
     logger.info("Points saved for task '%s': %d points, longest_edge=%s",
                 task_name, len(body.points), body.longest_edge)
 
-    # Step 2: Update config (same transaction)
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    config["task"] = task_name
-    config["input"]["rgbd_dir"] = f"./tasks/{task_name}/"
-    config["input"]["multi_views_dir"] = f"./tasks/{task_name}/views/"
-
-    sp = info.get("sam2_points", {})
-    config["sam2"]["points"] = sp.get("points", [])
-    config["sam2"]["labels"] = sp.get("labels", [])
-
-    rs = info.get("real_size", {})
-    if rs.get("longest_edge"):
-        config["real_size"]["longest_edge"] = rs["longest_edge"]
-
-    config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True),
-                           encoding="utf-8")
-    logger.info("Config updated for task '%s'", task_name)
+    logger.info("Task config updated for task '%s'", task_name)
 
     return {
         "detail": "ok",
         "points_count": len(body.points),
         "longest_edge": body.longest_edge,
-        "config": str(config_path),
         "task_config": str(task_yaml),
     }
 

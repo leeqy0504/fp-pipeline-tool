@@ -170,11 +170,11 @@ class Scheduler:
         try:
             await self._transition_job(job, JobStatus.RUNNING, job_log)
 
-            cfg_path = config_path or "configs/foundationpose.yaml"
+            cfg_path = self._resolve_config_path(config_path)
             config = load_config(cfg_path, project_root=self.project_root)
             config.run_id = job.job_id
             orch = PipelineOrchestrator()
-            if job.preset:
+            if job.preset and not str(cfg_path).endswith("task.yaml"):
                 config.preset = job.preset
             stages = orch.resolve_stages(config)
             enabled_stages = self._enabled_stages(stages, job.stage_selection)
@@ -276,3 +276,9 @@ class Scheduler:
             return [stage for stage in stages if stage not in skipped_set]
         enabled_set = set(enabled)
         return [stage for stage in stages if stage in enabled_set]
+
+    @staticmethod
+    def _resolve_config_path(config_path: str | None) -> str:
+        if not config_path:
+            raise ValueError("Task config path is required. Generate tasks/<task>/task.yaml before submitting.")
+        return config_path
