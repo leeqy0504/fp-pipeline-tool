@@ -153,13 +153,12 @@ canvas {
 
     <button class="btn btn-primary" style="width:100%;justify-content:center"
             @click="savePoints()" :disabled="saving">
-      <span x-show="!saving">Save Points &amp; Update Config</span>
-      <span x-show="saving">Saving...</span>
+      <span x-show="!saving">保存点位并更新配置</span>
+      <span x-show="saving">保存中...</span>
     </button>
 
     <p class="text-muted text-sm mt-8">
-      Saves points to <code>dataset_info.json</code> and updates
-      <code>foundationpose.yaml</code> config.
+      点位写入 <code>dataset_info.json</code>，任务配置写入 <code>task.yaml</code>。
     </p>
   </div>
 </div>
@@ -320,7 +319,7 @@ function pickPoints(taskName) {
         const d = await r.json();
         if (!r.ok) throw new Error(d.detail || 'Failed to save');
 
-        this.success = `Saved ${points.length} point(s) and updated foundationpose.yaml. Ready to run!`;
+        this.success = `已保存 ${points.length} 个点位并更新 task.yaml，可以运行 Pipeline。`;
       } catch (e) {
         this.error = e.message;
       } finally {

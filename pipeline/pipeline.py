@@ -31,23 +31,63 @@ class PipelineOrchestrator:
             )
         return list(self.presets[preset_name]["stages"])
 
+    def resolve_stages(self, config: PipelineConfig) -> list[str]:
+        if config.pipeline_stages:
+            return list(config.pipeline_stages)
+        return self.resolve_preset(config.preset)
+
+    def _run_dir(self, config: PipelineConfig) -> str:
+        task_dir = Path(config.output_dir) / config.task
+        if config.run_id:
+            return str(task_dir / "runs" / config.run_id)
+        return str(task_dir)
+
     def _manifest_path(self, config: PipelineConfig) -> str:
-        return str(Path(config.output_dir) / config.task / "manifest.json")
+        return str(Path(self._run_dir(config)) / "manifest.json")
 
     def _stage_output_dir(self, config: PipelineConfig, stage_name: str) -> str:
-        return str(Path(config.output_dir) / config.task / stage_name)
+        base = Path(self._run_dir(config))
+        if config.run_id:
+            return str(base / "stages" / stage_name)
+        return str(base / stage_name)
+
+    def _write_resolved_config(self, config: PipelineConfig) -> str:
+        path = Path(self._run_dir(config)) / "resolved_config.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "task": config.task,
+            "preset": config.preset,
+            "run_id": config.run_id,
+            "input": config.input.__dict__,
+            "sam2": config.sam2.__dict__,
+            "hunyuan": config.hunyuan.__dict__,
+            "real_size": config.real_size.__dict__,
+            "foundationpose": config.foundationpose.__dict__,
+            "detection_dataset": config.detection_dataset.__dict__,
+            "output_dir": config.output_dir,
+            "pipeline_stages": config.pipeline_stages,
+            "runtime": config.runtime,
+            "registry_snapshot": config.registry_snapshot,
+            "source_config_path": config.source_config_path,
+        }
+        with open(path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return str(path)
 
     def run_preset(self, config: PipelineConfig, force: bool = False,
                    context: "StageContext | None" = None,
                    enabled_stages: list[str] | None = None):
-        stages = self.resolve_preset(config.preset)
+        stages = self.resolve_stages(config)
         enabled = set(enabled_stages) if enabled_stages is not None else None
 
         manifest_path = self._manifest_path(config)
+        resolved_config_path = self._write_resolved_config(config)
         manifest = Manifest.load(manifest_path) if Path(manifest_path).exists() else Manifest(
             task=config.task,
-            config_path=config.output_dir,
+            config_path=resolved_config_path,
+            run_id=config.run_id,
         )
+        manifest.config_path = resolved_config_path
         if enabled is not None:
             skipped = [name for name in stages if name not in enabled]
             manifest.metadata["stage_selection"] = {
@@ -55,6 +95,9 @@ class PipelineOrchestrator:
                 "enabled": [name for name in stages if name in enabled],
                 "skipped": skipped,
             }
+        manifest.metadata["run_dir"] = self._run_dir(config)
+        if config.registry_snapshot:
+            manifest.metadata["registry_snapshot"] = config.registry_snapshot
 
         for stage_name in stages:
             if enabled is not None and stage_name not in enabled:
@@ -90,10 +133,14 @@ class PipelineOrchestrator:
     def run_stage(self, config: PipelineConfig, stage_name: str, force: bool = False,
                   context: "StageContext | None" = None):
         manifest_path = self._manifest_path(config)
+        resolved_config_path = self._write_resolved_config(config)
         manifest = Manifest.load(manifest_path) if Path(manifest_path).exists() else Manifest(
             task=config.task,
-            config_path=config.output_dir,
+            config_path=resolved_config_path,
+            run_id=config.run_id,
         )
+        manifest.config_path = resolved_config_path
+        manifest.metadata["run_dir"] = self._run_dir(config)
 
         if not force and manifest.is_stage_done(stage_name):
             print(f"[pipeline] {stage_name}: skip (already done)")

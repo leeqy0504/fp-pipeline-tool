@@ -164,26 +164,37 @@ class Scheduler:
         job_log = create_job_logger(job.job_id, self.ws_manager, self.project_root)
         stop_evt = threading.Event()
         job.stop_event = stop_evt
+        manifest = None
+        manifest_path = None
 
         try:
             await self._transition_job(job, JobStatus.RUNNING, job_log)
 
             cfg_path = config_path or "configs/foundationpose.yaml"
-            config = load_config(cfg_path)
+            config = load_config(cfg_path, project_root=self.project_root)
+            config.run_id = job.job_id
             orch = PipelineOrchestrator()
-            stages = orch.resolve_preset(job.preset)
+            if job.preset:
+                config.preset = job.preset
+            stages = orch.resolve_stages(config)
             enabled_stages = self._enabled_stages(stages, job.stage_selection)
             skipped_stages = [stage for stage in stages if stage not in enabled_stages]
 
-            manifest_dir = Path(config.output_dir) / config.task
-            manifest_path = manifest_dir / "manifest.json"
+            resolved_config_path = orch._write_resolved_config(config)
+            manifest_dir = Path(orch._run_dir(config))
+            manifest_path = Path(orch._manifest_path(config))
             manifest = (Manifest.load(str(manifest_path)) if manifest_path.exists()
-                        else Manifest(task=config.task, config_path=str(manifest_dir)))
+                        else Manifest(task=config.task, config_path=resolved_config_path,
+                                      run_id=job.job_id))
+            manifest.config_path = resolved_config_path
             manifest.metadata["stage_selection"] = {
                 "preset": job.preset,
                 "enabled": enabled_stages,
                 "skipped": skipped_stages,
             }
+            manifest.metadata["run_dir"] = str(manifest_dir)
+            if config.registry_snapshot:
+                manifest.metadata["registry_snapshot"] = config.registry_snapshot
             manifest.save(str(manifest_path))
 
             loop = asyncio.get_running_loop()
@@ -209,7 +220,7 @@ class Scheduler:
 
                 from pipeline.stages import get_stage
                 stage = get_stage(stage_name)
-                output_dir = Path(config.output_dir) / config.task / stage_name
+                output_dir = Path(orch._stage_output_dir(config, stage_name))
 
                 context = StageContext(
                     logger=job_log, job_id=job.job_id, stop_event=stop_evt)
@@ -231,9 +242,18 @@ class Scheduler:
                 manifest.save(str(manifest_path))
 
             if job.status != JobStatus.STOPPED:
+                manifest.mark_completed()
+                manifest.save(str(manifest_path))
                 await self._transition_job(job, JobStatus.COMPLETED, job_log)
 
         except asyncio.CancelledError:
+            try:
+                if manifest is None or manifest_path is None:
+                    raise RuntimeError("manifest not initialized")
+                manifest.mark_stopped()
+                manifest.save(str(manifest_path))
+            except Exception:
+                pass
             await self._transition_job(job, JobStatus.STOPPED, job_log)
             job_log.warning("Job cancelled by user")
         except Exception as e:

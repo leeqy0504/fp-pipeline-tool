@@ -32,7 +32,6 @@
 }
 .flow-item.skipped { color: var(--text-muted); }
 .detail-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
-.icon-trash::before { content: "\1F5D1"; font-size: 13px; line-height: 1; }
 </style>
 {% endblock %}
 
@@ -132,6 +131,7 @@
     <div class="form-group mt-8" style="max-width:240px">
       <label>Preset</label>
       <select class="select" x-model="preset" @change="loadDefaultStages()">
+        <option value="pose6d">pose6d</option>
         <option value="foundationpose">foundationpose</option>
       </select>
     </div>
@@ -205,7 +205,7 @@
 function taskActions() {
   return {
     taskName: '',
-    preset: 'foundationpose',
+    preset: {{ (stage_settings.preset if stage_settings else "pose6d") | tojson }},
     running: false,
     submitting: false,
     deleting: false,

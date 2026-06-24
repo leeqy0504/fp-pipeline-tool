@@ -1,0 +1,6 @@
+sam2:
+  container: sam2-backend-1
+  checkpoint: /opt/sam2/checkpoints/sam2.1_hiera_base_plus.pt
+  config_file: configs/sam2.1/sam2.1_hiera_b+.yaml
+  points: []
+  labels: []

@@ -1,0 +1,18 @@
+hunyuan:
+  model: /home/try/.cache/huggingface/hub/models--tencent--Hunyuan3D-2mv/snapshots/3a761b539b29fe4ff64714813aa9560fd66f5de0
+  subfolder: hunyuan3d-dit-v2-mv
+  variant: fp16
+  num_inference_steps: 50
+  octree_resolution: 380
+  num_chunks: 20000
+  seed: 12345
+  output_type: trimesh
+  remove_background: true
+  conda_env: hunyuan
+  project_dir: /home/try/code/Hunyuan3D-2
+  python: /home/try/.conda/envs/hunyuan/bin/python
+  views:
+    front: front.jpg
+    left: left.jpg
+    right: right.jpg
+    back: back.jpg

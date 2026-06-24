@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from pipeline.config import PipelineConfig
-from pipeline.manifest import Manifest
+from pipeline.manifest import load_manifest_for_config
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
 from pipeline.stages.context import StageContext
@@ -44,8 +44,7 @@ class PackageStage(BaseStage):
         with open(cam_src) as f:
             cam_data = json.load(f)
 
-        manifest_path = Path(config.output_dir) / config.task / "manifest.json"
-        manifest = Manifest.load(str(manifest_path)) if manifest_path.exists() else Manifest(config.task, config.output_dir)
+        manifest = load_manifest_for_config(config)
 
         if self._mask_path_override:
             mask_src = Path(self._mask_path_override)

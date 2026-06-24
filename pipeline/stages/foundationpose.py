@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from pipeline.config import PipelineConfig
-from pipeline.manifest import Manifest
+from pipeline.manifest import load_manifest_for_config
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
 from pipeline.stages.context import StageContext
@@ -20,11 +20,7 @@ class FoundationPoseStage(BaseStage):
             context: StageContext | None = None) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        manifest_path = Path(config.output_dir) / config.task / "manifest.json"
-        if manifest_path.exists():
-            manifest = Manifest.load(str(manifest_path))
-        else:
-            manifest = Manifest(config.task, config.output_dir)
+        manifest = load_manifest_for_config(config)
 
         package_dir = manifest.get_output_dir("package")
         if not package_dir:

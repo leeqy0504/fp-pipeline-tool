@@ -1,0 +1,8 @@
+preset: pose6d
+stages:
+  - masks
+  - hunyuangen
+  - scale
+  - package
+  - foundationpose
+  - detection_dataset

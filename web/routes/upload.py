@@ -6,6 +6,8 @@ from pathlib import Path
 from fastapi import APIRouter, Request, HTTPException
 from starlette.datastructures import UploadFile
 
+from web.routes import _project_root
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
@@ -17,9 +19,6 @@ ALLOWED_EXTENSIONS = {
 }
 MAX_FILE_COUNT = 500
 DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
-
-
-from web.routes import _project_root
 
 
 # ── Upload (with directory structure preservation) ──────────────
@@ -205,6 +204,7 @@ async def save_points(task_name: str, request: Request):
         info["real_size"] = {"longest_edge": body.longest_edge}
 
     info_path.write_text(json.dumps(info, indent=4, ensure_ascii=False), encoding="utf-8")
+    _write_task_yaml(_project_root(request), task_name, info)
     logger.info("Points saved for task '%s': %d points, longest_edge=%s",
                 task_name, len(body.points), body.longest_edge)
 
@@ -249,9 +249,10 @@ async def setup_config(task_name: str, request: Request):
 
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True),
                            encoding="utf-8")
+    task_yaml = _write_task_yaml(_project_root(request), task_name, info)
     logger.info("Config updated for task '%s'", task_name)
 
-    return {"detail": "ok", "config": str(config_path)}
+    return {"detail": "ok", "config": str(config_path), "task_config": str(task_yaml)}
 
 
 # ── Combined save + setup (transactional) ─────────────────────
@@ -303,6 +304,7 @@ async def save_and_setup(task_name: str, request: Request):
         info["real_size"] = {"longest_edge": body.longest_edge}
 
     info_path.write_text(json.dumps(info, indent=4, ensure_ascii=False), encoding="utf-8")
+    task_yaml = _write_task_yaml(_project_root(request), task_name, info)
     logger.info("Points saved for task '%s': %d points, longest_edge=%s",
                 task_name, len(body.points), body.longest_edge)
 
@@ -329,6 +331,7 @@ async def save_and_setup(task_name: str, request: Request):
         "points_count": len(body.points),
         "longest_edge": body.longest_edge,
         "config": str(config_path),
+        "task_config": str(task_yaml),
     }
 
 
@@ -386,6 +389,45 @@ def _summarize_upload(task_dir: Path, uploaded: list) -> dict:
         if fp.is_file():
             summary["other"].append(f)
     return summary
+
+
+def _write_task_yaml(project_root: Path, task_name: str, info: dict) -> Path:
+    import yaml
+
+    task_dir = project_root / "tasks" / task_name
+    path = task_dir / "task.yaml"
+    existing = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if not isinstance(existing, dict):
+        existing = {}
+
+    sam2_points = info.get("sam2_points", {})
+    real_size = info.get("real_size", {})
+    data = {
+        **existing,
+        "task_id": task_name,
+        "pipeline": existing.get("pipeline", "pose6d"),
+        "runtime": existing.get("runtime", "server"),
+        "class_id": existing.get("class_id", 0),
+        "input": {
+            **existing.get("input", {}),
+            "rgbd_dir": f"./tasks/{task_name}/",
+            "multi_views_dir": f"./tasks/{task_name}/views/",
+            "first_frame": existing.get("input", {}).get("first_frame", 0),
+        },
+        "sam2": {
+            **existing.get("sam2", {}),
+            "points": sam2_points.get("points", []),
+            "labels": sam2_points.get("labels", []),
+        },
+        "real_size": {
+            **existing.get("real_size", {}),
+            "longest_edge": real_size.get("longest_edge", existing.get("real_size", {}).get("longest_edge", 1.0)),
+        },
+        "output_dir": existing.get("output_dir", "output/"),
+    }
+    path.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8")
+    return path
 
 
 def _build_dataset_info(task_dir: Path) -> dict:

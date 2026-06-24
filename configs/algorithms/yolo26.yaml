@@ -1,0 +1,5 @@
+detection:
+  provider: yolo26
+  model_id: null
+  confidence: 0.25
+  iou: 0.7

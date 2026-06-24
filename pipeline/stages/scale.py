@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from pipeline.config import PipelineConfig
-from pipeline.manifest import Manifest
+from pipeline.manifest import load_manifest_for_config
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
 from pipeline.stages.context import StageContext
@@ -65,11 +65,7 @@ class ScaleStage(BaseStage):
         if self._input_obj_path:
             obj_path = Path(self._input_obj_path)
         else:
-            manifest_path = Path(config.output_dir) / config.task / "manifest.json"
-            if manifest_path.exists():
-                manifest = Manifest.load(str(manifest_path))
-            else:
-                manifest = Manifest(config.task, config.output_dir)
+            manifest = load_manifest_for_config(config)
             hunyuan_dir = manifest.get_output_dir("hunyuangen")
             if not hunyuan_dir:
                 raise StageError("No hunyuangen output found in manifest")
@@ -82,5 +78,6 @@ class ScaleStage(BaseStage):
 
         out_path = output_dir / "scaled.obj"
         out_path.write_text(scaled)
+        (output_dir / "obj.obj").write_text(scaled)
 
         return output_dir

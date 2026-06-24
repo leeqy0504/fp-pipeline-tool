@@ -152,6 +152,35 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-di
 
 .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
 
+.icon-trash {
+  position: relative;
+  display: inline-block;
+  width: 12px;
+  height: 13px;
+  flex: 0 0 12px;
+}
+.icon-trash::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 0;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-top: 0;
+  border-radius: 0 0 2px 2px;
+}
+.icon-trash::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: 2px;
+  width: 10px;
+  height: 1.5px;
+  background: currentColor;
+  box-shadow: 3px -2px 0 -0.5px currentColor;
+}
+
 /* ── Cards ────────────────────────────────────────────────── */
 .card {
   background: var(--bg-secondary);

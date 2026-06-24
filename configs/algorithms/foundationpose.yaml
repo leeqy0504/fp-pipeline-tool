@@ -1,0 +1,4 @@
+foundationpose:
+  container: foundationpose
+  workdir: /home/try/code/FoundationPose
+  debug: 0

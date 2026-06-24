@@ -51,6 +51,10 @@ def _task_config_path(task_path: Path) -> Path:
     return task_path / "pipeline_config.yaml"
 
 
+def _task_yaml_path(task_path: Path) -> Path:
+    return task_path / "task.yaml"
+
+
 def _load_stage_settings(task_path: Path) -> dict | None:
     path = _settings_path(task_path)
     if not path.exists():
@@ -59,6 +63,31 @@ def _load_stage_settings(task_path: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         logger.warning("Failed to read pipeline settings: %s", path, exc_info=True)
+        return None
+
+
+def _latest_manifest_path(output_dir: Path, task_name: str) -> Path | None:
+    task_output = output_dir / task_name
+    run_root = task_output / "runs"
+    candidates: list[Path] = []
+    if run_root.exists():
+        candidates.extend(run_root.glob("*/manifest.json"))
+    legacy = task_output / "manifest.json"
+    if legacy.exists():
+        candidates.append(legacy)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def _load_latest_manifest(output_dir: Path, task_name: str) -> dict | None:
+    path = _latest_manifest_path(output_dir, task_name)
+    if not path:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("Failed to read manifest: %s", path, exc_info=True)
         return None
 
 
@@ -105,19 +134,26 @@ def _resolve_stage_settings(preset: str, enabled: list[str]) -> dict:
 def _write_task_config_snapshot(project_root: Path, source_path: Path, dest_path: Path, new_name: str) -> None:
     import yaml
 
-    source_config = _task_config_path(source_path)
+    source_config = _task_yaml_path(source_path)
+    dest_config = _task_yaml_path(dest_path)
+    if not source_config.exists():
+        source_config = _task_config_path(source_path)
+        dest_config = _task_config_path(dest_path)
     if not source_config.exists():
         source_config = project_root / "configs" / "foundationpose.yaml"
     if not source_config.exists():
         return
 
     config = yaml.safe_load(source_config.read_text(encoding="utf-8")) or {}
-    config["task"] = new_name
+    if "task_id" in config or "pipeline" in config:
+        config["task_id"] = new_name
+    else:
+        config["task"] = new_name
     input_config = config.setdefault("input", {})
     input_config["rgbd_dir"] = f"./tasks/{new_name}/"
     input_config["multi_views_dir"] = f"./tasks/{new_name}/views/"
 
-    _task_config_path(dest_path).write_text(
+    dest_config.write_text(
         yaml.dump(config, default_flow_style=False, allow_unicode=True),
         encoding="utf-8",
     )
@@ -162,13 +198,7 @@ async def _build_tasks_list(scheduler, job_store, project_root: Path) -> list[di
             continue
         task_name = task_dir.name
 
-        manifest = None
-        manifest_path = output_dir / task_name / "manifest.json"
-        if manifest_path.exists():
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+        manifest = _load_latest_manifest(output_dir, task_name)
 
         running_job_id = running_map.get(task_name)
         if task_name in latest_map:
@@ -215,13 +245,7 @@ async def get_task(task_name: str, request: Request):
     job_store = request.app.state.job_store
     output_dir = _output_dir(request)
 
-    manifest = None
-    manifest_path = output_dir / task_name / "manifest.json"
-    if manifest_path.exists():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+    manifest = _load_latest_manifest(output_dir, task_name)
 
     # running job
     running = await scheduler.list_running()
@@ -264,8 +288,8 @@ async def get_stage_settings(task_name: str, request: Request):
     if saved:
         return saved
     from pipeline.pipeline import PipelineOrchestrator
-    stages = PipelineOrchestrator().resolve_preset("foundationpose")
-    return _resolve_stage_settings("foundationpose", stages)
+    stages = PipelineOrchestrator().resolve_preset("pose6d")
+    return _resolve_stage_settings("pose6d", stages)
 
 
 @router.post("/tasks/{task_name}/stage-settings")
@@ -294,7 +318,9 @@ async def run_task(task_name: str, body: RunRequest, request: Request):
         if not task_path.is_dir():
             raise HTTPException(404, f"Task '{task_name}' not found")
         config_path = body.config_path
-        local_config = _task_config_path(task_path)
+        local_config = _task_yaml_path(task_path)
+        if not local_config.exists():
+            local_config = _task_config_path(task_path)
         if config_path is None and local_config.exists():
             config_path = str(local_config)
         stage_selection = body.stage_selection or _load_stage_settings(task_path)
@@ -389,8 +415,8 @@ async def clone_task(task_name: str, body: CloneRequest, request: Request):
 @router.post("/tasks/{task_name}/reset")
 async def reset_task(task_name: str, request: Request):
     output_dir = _output_dir(request)
-    manifest_path = output_dir / task_name / "manifest.json"
-    if not manifest_path.exists():
+    manifest_path = _latest_manifest_path(output_dir, task_name)
+    if manifest_path is None or not manifest_path.exists():
         raise HTTPException(404, f"No manifest found for task '{task_name}'")
 
     # Safety check: don't reset if a job is running for this task

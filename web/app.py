@@ -1,4 +1,3 @@
-import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -101,7 +100,12 @@ async def api_logout():
 # ── Register API routers ───────────────────────────────────────
 
 
-from web.routes.tasks import router as tasks_router, _build_tasks_list, _load_stage_settings
+from web.routes.tasks import (
+    router as tasks_router,
+    _build_tasks_list,
+    _load_latest_manifest,
+    _load_stage_settings,
+)
 from web.routes.jobs import router as jobs_router
 from web.routes.configs import router as configs_router
 from web.routes.upload import router as upload_router
@@ -175,13 +179,7 @@ async def task_detail_page(task_name: str, request: Request):
     scheduler = request.app.state.scheduler
     output_dir = PROJECT_ROOT / "output"
 
-    manifest = None
-    manifest_path = output_dir / task_name / "manifest.json"
-    if manifest_path.exists():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+    manifest = _load_latest_manifest(output_dir, task_name)
 
     running = await scheduler.list_running()
     running_job_id = None

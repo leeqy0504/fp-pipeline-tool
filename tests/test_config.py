@@ -170,3 +170,77 @@ output_dir: output/
     assert config.sam2.container == "sam2-backend-1"
     assert config.hunyuan.secret_id == ""
     assert config.real_size.longest_edge == 1.0
+
+
+def test_load_config_from_task_yaml_layers(tmp_path):
+    """Task config can reference pipeline, algorithm, runtime, and registry layers."""
+    root = tmp_path
+    (root / "configs" / "pipelines").mkdir(parents=True)
+    (root / "configs" / "algorithms").mkdir(parents=True)
+    (root / "configs" / "runtime").mkdir(parents=True)
+    (root / "registry").mkdir()
+    (root / "tasks" / "mouse02").mkdir(parents=True)
+
+    (root / "configs" / "pipelines" / "pose6d.yaml").write_text("""
+preset: pose6d
+stages:
+  - masks
+  - hunyuangen
+  - scale
+  - package
+  - foundationpose
+""")
+    (root / "configs" / "algorithms" / "sam2.yaml").write_text("""
+sam2:
+  container: sam2-backend-1
+  checkpoint: /opt/sam2/checkpoints/sam2.1_hiera_base_plus.pt
+""")
+    (root / "configs" / "algorithms" / "hunyuan3d.yaml").write_text("""
+hunyuan:
+  model: /home/try/.cache/huggingface/hub/models--tencent--Hunyuan3D-2mv/snapshots/local
+  project_dir: /home/try/code/Hunyuan3D-2
+  python: /home/try/.conda/envs/hunyuan/bin/python
+  views:
+    front: front.jpg
+""")
+    (root / "configs" / "algorithms" / "foundationpose.yaml").write_text("""
+foundationpose:
+  container: foundationpose
+  workdir: /home/try/code/FoundationPose
+""")
+    (root / "configs" / "runtime" / "server.yaml").write_text("""
+runtime:
+  name: server
+""")
+    (root / "registry" / "classes.json").write_text("""
+[
+  {"class_id": 0, "name": "mouse"},
+  {"class_id": 1, "name": "cup"}
+]
+""")
+    (root / "tasks" / "mouse02" / "task.yaml").write_text("""
+task_id: mouse02
+class_id: 0
+pipeline: pose6d
+runtime: server
+input:
+  rgbd_dir: ./tasks/mouse02/
+  multi_views_dir: ./tasks/mouse02/views/
+sam2:
+  points: [[380, 182]]
+  labels: [1]
+real_size:
+  longest_edge: 0.126
+output_dir: output/
+""")
+
+    config = load_config(str(root / "tasks" / "mouse02" / "task.yaml"), project_root=root)
+
+    assert config.task == "mouse02"
+    assert config.preset == "pose6d"
+    assert config.sam2.container == "sam2-backend-1"
+    assert config.sam2.points == [[380, 182]]
+    assert config.hunyuan.python == "/home/try/.conda/envs/hunyuan/bin/python"
+    assert config.foundationpose.workdir == "/home/try/code/FoundationPose"
+    assert config.detection_dataset.class_id == 0
+    assert config.detection_dataset.class_name == "mouse"

@@ -50,6 +50,19 @@ def test_pipeline_manifest_path(tmp_path):
     assert "my_task/manifest.json" in path
 
 
+def test_pipeline_manifest_path_uses_run_dir_when_present(tmp_path):
+    config = make_config(rgbd_dir=str(tmp_path))
+    config.task = "my_task"
+    config.output_dir = str(tmp_path / "output")
+    config.run_id = "job123"
+
+    orch = PipelineOrchestrator()
+
+    assert orch._run_dir(config) == str(tmp_path / "output" / "my_task" / "runs" / "job123")
+    assert orch._manifest_path(config) == str(tmp_path / "output" / "my_task" / "runs" / "job123" / "manifest.json")
+    assert orch._stage_output_dir(config, "masks") == str(tmp_path / "output" / "my_task" / "runs" / "job123" / "stages" / "masks")
+
+
 def test_scheduler_enabled_stages_filters_in_preset_order():
     from web.scheduler import Scheduler
 
@@ -66,3 +79,19 @@ def test_scheduler_enabled_stages_accepts_skipped_only():
     selection = {"skipped": ["scale"]}
 
     assert Scheduler._enabled_stages(stages, selection) == ["masks", "hunyuangen", "package"]
+
+
+def test_load_stage_settings_reads_saved_json(tmp_path):
+    from web.routes.tasks import _load_stage_settings
+
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    (task_dir / "pipeline_settings.json").write_text(
+        '{"preset":"pose6d","enabled":["masks"],"skipped":["scale"]}',
+        encoding="utf-8",
+    )
+
+    settings = _load_stage_settings(task_dir)
+
+    assert settings["preset"] == "pose6d"
+    assert settings["enabled"] == ["masks"]
