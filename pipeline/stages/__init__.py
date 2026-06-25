@@ -30,3 +30,5 @@ from pipeline.stages import scale          # noqa: E402,F401
 from pipeline.stages import package        # noqa: E402,F401
 from pipeline.stages import foundationpose  # noqa: E402,F401
 from pipeline.stages import detection_dataset  # noqa: E402,F401
+from pipeline.stages import sam2_video  # noqa: E402,F401
+from pipeline.stages import annotation_dataset  # noqa: E402,F401

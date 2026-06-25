@@ -44,12 +44,15 @@ class PackageStage(BaseStage):
         with open(cam_src) as f:
             cam_data = json.load(f)
 
-        manifest = load_manifest_for_config(config)
-
         if self._mask_path_override:
             mask_src = Path(self._mask_path_override)
         else:
-            mask_dir = manifest.get_output_dir("masks")
+            mask_dir = None
+            if context and context.data and context.data.get_input("masks"):
+                mask_dir = str(context.input("masks"))
+            else:
+                manifest = load_manifest_for_config(config)
+                mask_dir = manifest.get_output_dir("masks")
             if not mask_dir:
                 raise StageError("No masks output found in manifest")
             mask_files = sorted(Path(mask_dir).glob("*.png"))
@@ -61,7 +64,12 @@ class PackageStage(BaseStage):
         if self._obj_path_override:
             obj_src = Path(self._obj_path_override)
         else:
-            scale_dir = manifest.get_output_dir("scale")
+            scale_dir = None
+            if context and context.data and context.data.get_input("scale"):
+                scale_dir = str(context.input("scale"))
+            else:
+                manifest = load_manifest_for_config(config)
+                scale_dir = manifest.get_output_dir("scale")
             if not scale_dir:
                 raise StageError("No scale output found in manifest")
             obj_src = Path(scale_dir) / "scaled.obj"

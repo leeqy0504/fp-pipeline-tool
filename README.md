@@ -221,3 +221,14 @@ pipeline-tool流程(服务器端)
   3. scale — 解析 OBJ 的所有顶点，算出包围盒最长边，与 config 中real_size.longest_edge（真实物理尺寸，米）做等比缩放，重新写回顶点坐标，输出 scaled.obj。
   4. package — 将前面所有产物组装成 FoundationPose 标准数据集布局：RGB/深度帧重命名为 00000.png 序列，蒙版放入masks/，缩放后的 OBJ 放入 mesh/scaled.obj，保留 cam_K.txt 和 camera_params.json。
   5. foundationpose — 从 manifest 读取 package 输出路径，检查 FoundationPose 容器是否运行，未运行则自动启动，docker exec 执行 run_demo.py 传入 mesh 和场景目录，验证输出 ob_in_cam/*.txt 数量与 RGB 帧数一致，同时包含目标位姿的可视化输出。
+
+annotation_dataset流程(服务器端)
+  1. prompt_mask — 复用首帧 SAM2 点选逻辑，生成首帧 mask。
+  2. sam2_video_propagation — 调用 fp 仓库内的 tools/sam2/sam2_video_cli.py，在 SAM2 Docker 容器中根据首帧点位或首帧 mask 传播整段 RGB 序列，输出每帧 mask。
+  3. mask_qa / review_pack / detection_dataset_export — 数据清洗、人工预览包、YOLO 检测数据集导出，后续实现。
+
+SAM2 视频传播的 Docker 挂载约定：
+  - 推荐挂载整个 fp 项目根目录，而不是只挂载单个数据集目录：
+    /home/try/code/fp-pipeline-tool:/home/try/code/fp-pipeline-tool
+  - 原因：容器内需要同时访问 tasks/ 输入、output/ 输出、tools/sam2/cli 脚本。
+  - configs/algorithms/sam2.yaml 中的 sam2.project_mount 必须等于容器内 fp 项目根目录。

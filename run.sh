@@ -25,8 +25,8 @@ case "$CMD" in
             echo "ERROR: WEB_PASSWORD not set. Create .env from .env.example or export it."
             exit 1
         fi
-        echo "Starting Pipeline Web UI on http://0.0.0.0:8000"
-        uvicorn web.app:app --host 0.0.0.0 --port "${2:-8000}"
+        echo "Starting Pipeline Web UI on http://0.0.0.0:8001"
+        uvicorn web.app:app --host 0.0.0.0 --port "${2:-8001}"
         ;;
     *)
         PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}" python -m pipeline.cli "$CMD" "$@"

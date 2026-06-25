@@ -130,3 +130,9 @@ def test_scheduler_requires_task_config_when_no_config_path():
         assert "task.yaml" in str(exc)
     else:
         raise AssertionError("Expected missing config path to fail")
+
+
+def test_prompt_mask_stage_reuses_sam2_mask_stage():
+    from pipeline.stages import get_stage
+
+    assert get_stage("prompt_mask").name == "masks"

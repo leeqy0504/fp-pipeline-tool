@@ -222,8 +222,16 @@ class Scheduler:
                 stage = get_stage(stage_name)
                 output_dir = Path(orch._stage_output_dir(config, stage_name))
 
-                context = StageContext(
+                base_context = StageContext(
                     logger=job_log, job_id=job.job_id, stop_event=stop_evt)
+                context = orch._build_stage_context(
+                    config,
+                    stage_name,
+                    output_dir,
+                    manifest,
+                    base_context,
+                    resolved_config_path,
+                )
 
                 start = time.time()
                 try:

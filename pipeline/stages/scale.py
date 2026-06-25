@@ -64,6 +64,8 @@ class ScaleStage(BaseStage):
 
         if self._input_obj_path:
             obj_path = Path(self._input_obj_path)
+        elif context and context.data and context.data.get_input("hunyuangen"):
+            obj_path = context.input("hunyuangen") / "raw.obj"
         else:
             manifest = load_manifest_for_config(config)
             hunyuan_dir = manifest.get_output_dir("hunyuangen")

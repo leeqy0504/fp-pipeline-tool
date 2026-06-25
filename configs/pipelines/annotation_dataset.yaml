@@ -1,0 +1,7 @@
+preset: annotation_dataset
+stages:
+  - prompt_mask
+  - sam2_video_propagation
+  - mask_qa
+  - review_pack
+  - detection_dataset_export

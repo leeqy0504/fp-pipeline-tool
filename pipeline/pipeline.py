@@ -74,6 +74,42 @@ class PipelineOrchestrator:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return str(path)
 
+    def _build_stage_context(
+        self,
+        config: PipelineConfig,
+        stage_name: str,
+        output_dir: Path,
+        manifest: Manifest,
+        base_context: "StageContext | None" = None,
+        resolved_config_path: str | None = None,
+    ) -> "StageContext":
+        from pipeline.stages.context import DataContext, RunContext, StageContext
+
+        inputs = {
+            name: Path(info["output_dir"])
+            for name, info in manifest.stages.items()
+            if info.get("status") == "done" and info.get("output_dir")
+        }
+        run_dir = Path(self._run_dir(config))
+        task_dir = Path(config.input.rgbd_dir)
+        run_context = RunContext(
+            run_id=config.run_id,
+            task_name=config.task,
+            logger=base_context.logger if base_context else None,
+            resolved_config_path=Path(resolved_config_path) if resolved_config_path else None,
+            job_id=(base_context.job_id if base_context else None) or config.run_id,
+            stop_event=base_context.stop_event if base_context else None,
+            progress_callback=base_context.progress_callback if base_context else None,
+            metadata=base_context.metadata if base_context else {},
+        )
+        data_context = DataContext(
+            task_dir=task_dir,
+            run_dir=run_dir,
+            output_dir=output_dir,
+            inputs=inputs,
+        )
+        return StageContext(run=run_context, data=data_context, stage_name=stage_name)
+
     def run_preset(self, config: PipelineConfig, force: bool = False,
                    context: "StageContext | None" = None,
                    enabled_stages: list[str] | None = None):
@@ -113,10 +149,12 @@ class PipelineOrchestrator:
             print(f"[pipeline] {stage_name}: starting...")
             stage = get_stage(stage_name)
             output_dir = Path(self._stage_output_dir(config, stage_name))
+            stage_context = self._build_stage_context(
+                config, stage_name, output_dir, manifest, context, resolved_config_path)
 
             start = time.time()
             try:
-                result_path = stage.run(config, output_dir, context=context)
+                result_path = stage.run(config, output_dir, context=stage_context)
                 elapsed = time.time() - start
                 manifest.mark_stage_done(stage_name, str(result_path), elapsed)
                 print(f"[pipeline] {stage_name}: done ({elapsed:.1f}s)")
@@ -149,10 +187,12 @@ class PipelineOrchestrator:
         print(f"[pipeline] {stage_name}: starting...")
         stage = get_stage(stage_name)
         output_dir = Path(self._stage_output_dir(config, stage_name))
+        stage_context = self._build_stage_context(
+            config, stage_name, output_dir, manifest, context, resolved_config_path)
 
         start = time.time()
         try:
-            result_path = stage.run(config, output_dir, context=context)
+            result_path = stage.run(config, output_dir, context=stage_context)
             elapsed = time.time() - start
             manifest.mark_stage_done(stage_name, str(result_path), elapsed)
             print(f"[pipeline] {stage_name}: done ({elapsed:.1f}s)")

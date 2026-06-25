@@ -244,3 +244,57 @@ output_dir: output/
     assert config.foundationpose.workdir == "/home/try/code/FoundationPose"
     assert config.detection_dataset.class_id == 0
     assert config.detection_dataset.class_name == "mouse"
+
+
+def test_load_annotation_dataset_pipeline_from_task_yaml(tmp_path):
+    root = tmp_path
+    (root / "configs" / "pipelines").mkdir(parents=True)
+    (root / "configs" / "algorithms").mkdir(parents=True)
+    (root / "configs" / "runtime").mkdir(parents=True)
+    (root / "tasks" / "mouse02").mkdir(parents=True)
+    (root / "registry").mkdir()
+
+    (root / "configs" / "pipelines" / "annotation_dataset.yaml").write_text("""
+preset: annotation_dataset
+stages:
+  - prompt_mask
+  - sam2_video_propagation
+  - mask_qa
+  - review_pack
+  - detection_dataset_export
+""")
+    (root / "configs" / "algorithms" / "sam2.yaml").write_text("""
+sam2:
+  container: sam2-backend-1
+  project_mount: /home/try/code/fp-pipeline-tool
+  video_cli: tools/sam2/sam2_video_cli.py
+  points: []
+  labels: []
+""")
+    (root / "configs" / "runtime" / "server.yaml").write_text("runtime: {name: server}\n")
+    (root / "tasks" / "mouse02" / "task.yaml").write_text("""
+task_id: mouse02
+pipeline: annotation_dataset
+runtime: server
+input:
+  rgbd_dir: ./tasks/mouse02/
+  multi_views_dir: ./tasks/mouse02/views/
+sam2:
+  points: [[10, 20]]
+  labels: [1]
+real_size:
+  longest_edge: 0.1
+""")
+
+    config = load_config(str(root / "tasks" / "mouse02" / "task.yaml"), project_root=root)
+
+    assert config.preset == "annotation_dataset"
+    assert config.sam2.project_mount == "/home/try/code/fp-pipeline-tool"
+    assert config.sam2.video_cli == "tools/sam2/sam2_video_cli.py"
+    assert config.pipeline_stages == [
+        "prompt_mask",
+        "sam2_video_propagation",
+        "mask_qa",
+        "review_pack",
+        "detection_dataset_export",
+    ]

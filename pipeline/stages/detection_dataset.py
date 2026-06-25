@@ -107,12 +107,20 @@ class DetectionDatasetStage(BaseStage):
             context: StageContext | None = None) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        manifest = load_manifest_for_config(config)
-
-        package_dir = manifest.get_output_dir("package")
+        manifest = None
+        if context and context.data and context.data.get_input("package"):
+            package_dir = str(context.input("package"))
+        else:
+            manifest = load_manifest_for_config(config)
+            package_dir = manifest.get_output_dir("package")
         if not package_dir:
             raise StageError("No package output found in manifest - run 'package' stage first")
-        fp_dir = manifest.get_output_dir("foundationpose")
+        if context and context.data and context.data.get_input("foundationpose"):
+            fp_dir = str(context.input("foundationpose"))
+        else:
+            if manifest is None:
+                manifest = load_manifest_for_config(config)
+            fp_dir = manifest.get_output_dir("foundationpose")
         if not fp_dir:
             raise StageError("No foundationpose output found in manifest - run 'foundationpose' stage first")
 

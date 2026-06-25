@@ -12,6 +12,7 @@ from pipeline.stages.context import StageContext
 
 
 @register_stage("masks")
+@register_stage("prompt_mask")
 class Sam2MaskStage(BaseStage):
     name = "masks"
 
@@ -76,7 +77,7 @@ class Sam2MaskStage(BaseStage):
                 print("[sam2mask] No dataset_info.json found, using config pts/labels")
 
         points_str = " ".join(f"{x},{y}" for x, y in points)
-        labels_str = " ".join(str(l) for l in labels)
+        labels_str = " ".join(str(label) for label in labels)
 
         # 3. Run inference inside container
         result = subprocess.run(
@@ -102,7 +103,7 @@ class Sam2MaskStage(BaseStage):
             )
 
         # 4. Parse JSON output from CLI
-        output = json.loads(result.stdout.strip().split("\n")[-1])
+        json.loads(result.stdout.strip().split("\n")[-1])
 
         # 5. Copy mask back to host
         mask_output = output_dir / first_frame.name

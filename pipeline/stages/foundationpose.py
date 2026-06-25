@@ -20,9 +20,11 @@ class FoundationPoseStage(BaseStage):
             context: StageContext | None = None) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        manifest = load_manifest_for_config(config)
-
-        package_dir = manifest.get_output_dir("package")
+        if context and context.data and context.data.get_input("package"):
+            package_dir = str(context.input("package"))
+        else:
+            manifest = load_manifest_for_config(config)
+            package_dir = manifest.get_output_dir("package")
         if not package_dir:
             raise StageError(
                 "No package output found in manifest — run 'package' stage first"
