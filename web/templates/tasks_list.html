@@ -14,7 +14,12 @@
        x-data="{deleting:false,error:'',success:'', taskName: $el.dataset.taskName}">
     <a href="/tasks/{{ t.task_name }}" class="task-link">
       <div class="flex justify-between items-center">
-        <h3 style="margin:0">{{ t.task_name }}</h3>
+        <div>
+          <h3 style="margin:0">{{ t.task_name }}</h3>
+          <div class="task-meta" style="margin-top:4px">
+            <span>{{ "Annotation Dataset" if t.pipeline == "annotation_dataset" else "Pose6D" }}</span>
+          </div>
+        </div>
         {% set has_manifest = t.manifest and t.manifest.stages %}
         {% if has_manifest %}
           {% set ns = namespace(all_done=true, has_failed=false) %}
@@ -46,6 +51,9 @@
       <div class="task-meta">
         {% if t.latest_job_id %}
         <span>Job: {{ t.latest_job_id[:8] }}</span>
+        {% endif %}
+        {% if t.stage_settings and t.stage_settings.skipped %}
+        <span>Skip: {{ t.stage_settings.skipped|length }}</span>
         {% endif %}
         {% if t.manifest and t.manifest.created_at %}
         <span>{{ t.manifest.created_at[:10] }}</span>

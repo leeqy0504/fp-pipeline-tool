@@ -103,8 +103,11 @@ async def api_logout():
 from web.routes.tasks import (
     router as tasks_router,
     _build_tasks_list,
+    _build_task_artifacts,
+    _default_stage_settings,
     _load_latest_manifest,
     _load_stage_settings,
+    _task_pipeline,
 )
 from web.routes.jobs import router as jobs_router
 from web.routes.configs import router as configs_router
@@ -190,9 +193,11 @@ async def task_detail_page(task_name: str, request: Request):
 
     return _render(request, "task_detail.html", {
         "task_name": task_name,
+        "pipeline": _task_pipeline(tasks_dir / task_name),
         "manifest": manifest,
         "running_job_id": running_job_id,
-        "stage_settings": _load_stage_settings(tasks_dir / task_name),
+        "stage_settings": _load_stage_settings(tasks_dir / task_name) or _default_stage_settings(tasks_dir / task_name),
+        "artifacts": _build_task_artifacts(PROJECT_ROOT, task_name),
         "page": "tasks",
     })
 

@@ -3,8 +3,10 @@ import logging
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from web.routes import _project_root
@@ -54,6 +56,28 @@ def _task_config_path(task_path: Path) -> Path:
 
 def _task_yaml_path(task_path: Path) -> Path:
     return task_path / "task.yaml"
+
+
+def _read_task_yaml(task_path: Path) -> dict:
+    import yaml
+
+    path = _task_yaml_path(task_path)
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        logger.warning("Failed to read task.yaml: %s", path, exc_info=True)
+        return {}
+
+
+def _task_pipeline(task_path: Path) -> str:
+    saved = _load_stage_settings(task_path)
+    if saved and saved.get("preset"):
+        return str(saved["preset"])
+    data = _read_task_yaml(task_path)
+    return str(data.get("pipeline") or data.get("preset") or "pose6d")
 
 
 def _ensure_task_yaml(project_root: Path, task_name: str) -> Path:
@@ -136,13 +160,134 @@ def _load_latest_manifest(output_dir: Path, task_name: str) -> dict | None:
         return None
 
 
+def _safe_json(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("Failed to read JSON artifact: %s", path, exc_info=True)
+        return None
+
+
+def _rel_to_project(project_root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(project_root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _file_item(project_root: Path, path: Path, label: str | None = None) -> dict:
+    rel_path = _rel_to_project(project_root, path)
+    return {
+        "name": path.name,
+        "label": label or path.name,
+        "path": rel_path,
+        "url": f"/api/tasks/artifact-file?path={quote(rel_path)}",
+        "size": path.stat().st_size if path.exists() else None,
+    }
+
+
+def _stage_dir(manifest: dict | None, stage_name: str) -> Path | None:
+    if not manifest:
+        return None
+    info = (manifest.get("stages") or {}).get(stage_name)
+    output = info.get("output_dir") if info else None
+    return Path(output) if output else None
+
+
+def _sample_files(paths: list[Path], limit: int = 24) -> list[Path]:
+    return sorted(paths)[:limit]
+
+
+def _build_task_artifacts(project_root: Path, task_name: str) -> dict:
+    task_dir = project_root / "tasks" / task_name
+    output_dir = project_root / "output"
+    manifest = _load_latest_manifest(output_dir, task_name)
+    pipeline = _task_pipeline(task_dir)
+
+    rgb_files = _sample_files(list((task_dir / "rgb").glob("*.png")) + list((task_dir / "rgb").glob("*.jpg")), 30)
+    depth_files = _sample_files(list((task_dir / "depth").glob("*.png")), 12)
+    view_files = _sample_files(
+        list((task_dir / "views").glob("*.png"))
+        + list((task_dir / "views").glob("*.jpg"))
+        + list((task_dir / "views").glob("*.jpeg")),
+        12,
+    )
+
+    artifacts = {
+        "task_name": task_name,
+        "pipeline": pipeline,
+        "manifest": manifest,
+        "dataset": {
+            "rgb": [_file_item(project_root, p) for p in rgb_files],
+            "depth": [_file_item(project_root, p) for p in depth_files],
+            "views": [_file_item(project_root, p) for p in view_files],
+        },
+        "annotation": None,
+        "pose6d": None,
+    }
+
+    if pipeline == "annotation_dataset":
+        prompt_dir = _stage_dir(manifest, "prompt_mask")
+        video_dir = _stage_dir(manifest, "sam2_video_propagation")
+        qa_dir = _stage_dir(manifest, "mask_qa")
+        review_dir = _stage_dir(manifest, "review_pack")
+        export_dir = _stage_dir(manifest, "detection_dataset_export")
+
+        qa_report = _safe_json(qa_dir / "qa_report.json") if qa_dir else None
+        annotations = _safe_json(export_dir / "annotations.json") if export_dir else None
+        masks_dir = video_dir / "masks" if video_dir else None
+        mask_files = _sample_files(list(masks_dir.glob("*.png")) if masks_dir and masks_dir.exists() else [], 30)
+        exported_images = _sample_files(list((export_dir / "images").glob("*.png")) if export_dir else [], 30)
+        exported_labels = sorted((export_dir / "labels").glob("*.txt"))[:30] if export_dir and (export_dir / "labels").exists() else []
+        artifacts["annotation"] = {
+            "prompt_masks": [_file_item(project_root, p) for p in _sample_files(list(prompt_dir.glob("*.png")) if prompt_dir else [], 6)],
+            "propagated_masks": [_file_item(project_root, p) for p in mask_files],
+            "qa_summary": (qa_report or {}).get("summary"),
+            "qa_frames": (qa_report or {}).get("frames", [])[:80],
+            "review_pack": _file_item(project_root, review_dir / "index.html", "review_pack.html") if review_dir and (review_dir / "index.html").exists() else None,
+            "dataset_yaml": _file_item(project_root, export_dir / "dataset.yaml", "dataset.yaml") if export_dir and (export_dir / "dataset.yaml").exists() else None,
+            "annotations": (annotations or {}),
+            "exported_images": [_file_item(project_root, p) for p in exported_images],
+            "exported_labels": [_file_item(project_root, p) for p in exported_labels],
+        }
+    else:
+        package_dir = _stage_dir(manifest, "package")
+        fp_dir = _stage_dir(manifest, "foundationpose")
+        det_dir = _stage_dir(manifest, "detection_dataset")
+        fp_visuals = []
+        if fp_dir and fp_dir.exists():
+            for pattern in ("*.png", "**/*.png", "*.jpg", "**/*.jpg"):
+                fp_visuals.extend(fp_dir.glob(pattern))
+        pose_files = sorted((fp_dir / "ob_in_cam").glob("*.txt"))[:20] if fp_dir and (fp_dir / "ob_in_cam").exists() else []
+        package_rgb = _sample_files(list((package_dir / "rgb").glob("*.png")) if package_dir else [], 20)
+        package_masks = _sample_files(list((package_dir / "masks").glob("*.png")) if package_dir else [], 20)
+        det_annotations = _safe_json(det_dir / "annotations.json") if det_dir else None
+        artifacts["pose6d"] = {
+            "package_rgb": [_file_item(project_root, p) for p in package_rgb],
+            "package_masks": [_file_item(project_root, p) for p in package_masks],
+            "fp_visuals": [_file_item(project_root, p) for p in _sample_files(list(set(fp_visuals)), 30)],
+            "pose_files": [_file_item(project_root, p) for p in pose_files],
+            "detection_dataset": det_annotations,
+            "dataset_yaml": _file_item(project_root, det_dir / "dataset.yaml", "dataset.yaml") if det_dir and (det_dir / "dataset.yaml").exists() else None,
+        }
+
+    return artifacts
+
+
 def _stage_labels() -> dict[str, str]:
     return {
         "masks": "分割",
+        "prompt_mask": "首帧分割",
+        "sam2_video_propagation": "视频传播",
+        "mask_qa": "Mask 质检",
+        "review_pack": "预览包",
+        "detection_dataset_export": "检测数据集导出",
         "hunyuangen": "三维生成",
         "scale": "尺度标定",
         "package": "打包",
-        "foundationpose": "FoundationPose",
+        "foundationpose": "6D 位姿",
         "detection_dataset": "检测数据集",
     }
 
@@ -175,6 +320,26 @@ def _resolve_stage_settings(preset: str, enabled: list[str], stages: list[str] |
         "skipped": skipped,
         "labels": _stage_labels(),
     }
+
+
+def _default_stage_settings(task_path: Path) -> dict:
+    from pipeline.pipeline import PipelineOrchestrator
+
+    preset = _task_pipeline(task_path)
+    stages = PipelineOrchestrator().resolve_preset(preset)
+    return _resolve_stage_settings(preset, stages)
+
+
+def _sync_task_pipeline(task_path: Path, preset: str) -> None:
+    import yaml
+
+    config = _read_task_yaml(task_path)
+    config["pipeline"] = preset
+    config.pop("preset", None)
+    _task_yaml_path(task_path).write_text(
+        yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
 
 
 def _write_task_config_snapshot(project_root: Path, source_path: Path, dest_path: Path, new_name: str) -> None:
@@ -250,6 +415,7 @@ async def _build_tasks_list(scheduler, job_store, project_root: Path) -> list[di
 
         tasks.append({
             "task_name": task_name,
+            "pipeline": _task_pipeline(task_dir),
             "manifest": manifest,
             "latest_job_id": latest_job_id,
             "running_job_id": running_job_id,
@@ -269,6 +435,22 @@ async def list_tasks(request: Request):
         request.app.state.job_store,
         _project_root(request),
     )
+
+
+@router.get("/tasks/artifact-file")
+async def get_artifact_file(path: str, request: Request):
+    project_root = _project_root(request).resolve()
+    rel = Path(path)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise HTTPException(400, "Invalid artifact path")
+    file_path = (project_root / rel).resolve()
+    try:
+        file_path.relative_to(project_root)
+    except ValueError:
+        raise HTTPException(403, "Artifact path is outside project root")
+    if not file_path.is_file():
+        raise HTTPException(404, "Artifact file not found")
+    return FileResponse(str(file_path))
 
 
 # ── Task detail ───────────────────────────────────────────────
@@ -312,24 +494,38 @@ async def get_task(task_name: str, request: Request):
 
     return {
         "task_name": task_name,
+        "pipeline": _task_pipeline(task_path),
         "manifest": manifest,
         "latest_job_id": latest_job_id,
         "running_job_id": running_job_id,
-        "stage_settings": _load_stage_settings(task_path),
+        "stage_settings": _load_stage_settings(task_path) or _default_stage_settings(task_path),
     }
 
 
-@router.get("/tasks/{task_name}/stage-settings")
-async def get_stage_settings(task_name: str, request: Request):
+@router.get("/tasks/{task_name}/artifacts")
+async def get_task_artifacts(task_name: str, request: Request):
     task_path = _tasks_dir(request) / task_name
     if not task_path.is_dir():
         raise HTTPException(404, f"Task '{task_name}' not found")
+    return _build_task_artifacts(_project_root(request), task_name)
+
+
+@router.get("/tasks/{task_name}/stage-settings")
+async def get_stage_settings(task_name: str, request: Request, preset: str | None = None):
+    task_path = _tasks_dir(request) / task_name
+    if not task_path.is_dir():
+        raise HTTPException(404, f"Task '{task_name}' not found")
+    if preset:
+        from pipeline.pipeline import PipelineOrchestrator
+        stages = PipelineOrchestrator().resolve_preset(preset)
+        return _resolve_stage_settings(preset, stages)
     saved = _load_stage_settings(task_path)
     if saved:
         return saved
     from pipeline.pipeline import PipelineOrchestrator
-    stages = PipelineOrchestrator().resolve_preset("pose6d")
-    return _resolve_stage_settings("pose6d", stages)
+    task_preset = _task_pipeline(task_path)
+    stages = PipelineOrchestrator().resolve_preset(task_preset)
+    return _resolve_stage_settings(task_preset, stages)
 
 
 @router.post("/tasks/{task_name}/stage-settings")
@@ -342,6 +538,7 @@ async def save_stage_settings(task_name: str, body: StageSettingsRequest, reques
         json.dumps(settings, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    _sync_task_pipeline(task_path, settings["preset"])
     logger.info("Pipeline settings saved for task '%s': enabled=%s skipped=%s",
                 task_name, settings["enabled"], settings["skipped"])
     return settings
@@ -364,14 +561,16 @@ async def run_task(task_name: str, body: RunRequest, request: Request):
         if config_path is None and local_config.exists():
             config_path = str(local_config)
         stage_selection = body.stage_selection or _load_stage_settings(task_path)
+        run_preset = body.preset
         if stage_selection:
+            run_preset = stage_selection.get("preset", body.preset)
             stage_selection = _resolve_stage_settings(
-                stage_selection.get("preset", body.preset),
+                run_preset,
                 stage_selection.get("enabled", []),
             )
         job_id = await scheduler.submit(
             task_name,
-            body.preset,
+            run_preset,
             config_path,
             stage_selection=stage_selection,
         )

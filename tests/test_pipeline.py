@@ -81,6 +81,51 @@ def test_scheduler_enabled_stages_accepts_skipped_only():
     assert Scheduler._enabled_stages(stages, selection) == ["masks", "hunyuangen", "package"]
 
 
+def test_scheduler_preset_override_replaces_task_yaml_pipeline_stages(tmp_path):
+    from pipeline.config import load_config
+    from pipeline.pipeline import PipelineOrchestrator
+    from tests.test_business_config import _write_platform_files
+
+    _write_platform_files(tmp_path)
+    (tmp_path / "configs" / "pipelines" / "annotation_dataset.yaml").write_text("""
+preset: annotation_dataset
+stages:
+  - prompt_mask
+  - sam2_video_propagation
+  - mask_qa
+  - review_pack
+  - detection_dataset_export
+""")
+    task_dir = tmp_path / "tasks" / "mouse02"
+    task_dir.mkdir(parents=True)
+    (task_dir / "task.yaml").write_text("""
+task_id: mouse02
+pipeline: pose6d
+runtime: server
+input:
+  rgbd_dir: ./tasks/mouse02/
+  multi_views_dir: ./tasks/mouse02/views/
+sam2:
+  points: [[1, 2]]
+  labels: [1]
+real_size:
+  longest_edge: 0.1
+""")
+
+    config = load_config(str(task_dir / "task.yaml"), project_root=tmp_path)
+    orch = PipelineOrchestrator()
+    config.preset = "annotation_dataset"
+    config.pipeline_stages = orch.resolve_preset("annotation_dataset")
+
+    assert orch.resolve_stages(config) == [
+        "prompt_mask",
+        "sam2_video_propagation",
+        "mask_qa",
+        "review_pack",
+        "detection_dataset_export",
+    ]
+
+
 def test_load_stage_settings_reads_saved_json(tmp_path):
     from web.routes.tasks import _load_stage_settings
 

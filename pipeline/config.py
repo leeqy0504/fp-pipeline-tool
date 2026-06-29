@@ -28,6 +28,7 @@ class Sam2Config:
     checkpoint: str = "/opt/sam2/checkpoints/sam2.1_hiera_base_plus.pt"
     config_file: str = "configs/sam2.1/sam2.1_hiera_b+.yaml"
     project_mount: str = "/home/try/code/fp-pipeline-tool"
+    pic_cli: str = "tools/sam2/sam2_pic_cli.py"
     video_cli: str = "tools/sam2/sam2_video_cli.py"
     points: list[list[int]] = field(default_factory=list)
     labels: list[int] = field(default_factory=list)
@@ -288,6 +289,7 @@ def load_config(config_path: str, project_root: str | Path | None = None) -> Pip
             checkpoint=resolved["sam2"].get("checkpoint", "/opt/sam2/checkpoints/sam2.1_hiera_base_plus.pt"),
             config_file=resolved["sam2"].get("config_file", "configs/sam2.1/sam2.1_hiera_b+.yaml"),
             project_mount=resolved["sam2"].get("project_mount", "/home/try/code/fp-pipeline-tool"),
+            pic_cli=resolved["sam2"].get("pic_cli", "tools/sam2/sam2_pic_cli.py"),
             video_cli=resolved["sam2"].get("video_cli", "tools/sam2/sam2_video_cli.py"),
             points=resolved["sam2"]["points"],
             labels=resolved["sam2"]["labels"],

@@ -23,9 +23,7 @@
     <div class="sidebar-spacer"></div>
     <div class="sidebar-footer">
       <div class="system-mini" id="system-mini"
-           x-data="systemStatus()" x-init="fetchStatus()"
-           hx-get="/api/system" hx-trigger="every 5s" hx-swap="none"
-           hx-on::after-request="updateFromHtmx(event)">
+           x-data="systemStatus()" x-init="init()">
         <div class="sys-row"><span>CPU</span><span class="sys-val" x-text="fmt(cpu_percent, '%')"></span></div>
         <div class="sys-row"><span>MEM</span><span class="sys-val" x-text="fmt(memory?.percent, '%')"></span></div>
         <div class="sys-row"><span>DISK</span><span class="sys-val" x-text="fmt(disk?.percent, '%')"></span></div>
@@ -58,18 +56,16 @@ function systemStatus() {
       if (v == null) return '';
       return v > threshold ? 'high' : v > threshold * 0.7 ? 'warn' : 'ok';
     },
+    init() {
+      this.fetchStatus();
+      setInterval(() => this.fetchStatus(), 5000);
+    },
     async fetchStatus() {
       try {
         const r = await fetch('/api/system');
         const d = await r.json();
         Object.assign(this, d);
       } catch(e) {}
-    },
-    updateFromHtmx(e) {
-      try {
-        const d = JSON.parse(e.detail.xhr.responseText);
-        Object.assign(this, d);
-      } catch(_) {}
     }
   };
 }

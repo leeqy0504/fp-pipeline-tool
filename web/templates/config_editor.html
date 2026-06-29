@@ -325,10 +325,15 @@ function businessConfig() {
     stageLabel(stage) {
       return this.labels[stage] || {
         masks: '分割',
+        prompt_mask: '首帧分割',
+        sam2_video_propagation: '视频传播',
+        mask_qa: 'Mask 质检',
+        review_pack: '预览包',
+        detection_dataset_export: '检测数据集导出',
         hunyuangen: '三维生成',
         scale: '尺度标定',
         package: '打包',
-        foundationpose: 'FoundationPose',
+        foundationpose: '6D 位姿',
         detection_dataset: '检测数据集',
       }[stage] || stage;
     },

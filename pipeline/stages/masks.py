@@ -4,11 +4,13 @@ import json
 import logging
 import subprocess
 from pathlib import Path
+from shlex import quote
 
 from pipeline.config import PipelineConfig
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
 from pipeline.stages.context import StageContext
+from pipeline.stages.sam2_video import _container_path
 
 
 @register_stage("masks")
@@ -32,16 +34,8 @@ class Sam2MaskStage(BaseStage):
 
         first_frame = rgb_files[config.input.first_frame]
         container = config.sam2.container
-        container_image = f"/tmp/input_{first_frame.name}"
-        container_output = "/tmp/output_mask.png"
 
-        # 1. Copy first frame into container
-        subprocess.run(
-            ["docker", "cp", str(first_frame), f"{container}:{container_image}"],
-            check=True,
-        )
-
-        # 2. Resolve points/labels — prefer dataset_info.json over config
+        # 1. Resolve points/labels — prefer dataset_info.json over config
         points = config.sam2.points
         labels = config.sam2.labels
 
@@ -78,20 +72,29 @@ class Sam2MaskStage(BaseStage):
 
         points_str = " ".join(f"{x},{y}" for x, y in points)
         labels_str = " ".join(str(label) for label in labels)
+        if not points or not labels or len(points) != len(labels):
+            raise StageError("SAM2 points/labels are required for mask generation")
 
-        # 3. Run inference inside container
+        mask_output = output_dir / first_frame.name
+        project_root = Path(__file__).resolve().parents[2]
+        script_host = project_root / config.sam2.pic_cli
+        self.check_input_path(str(script_host), "SAM2 picture CLI")
+        script_container = _container_path(script_host, project_root, config.sam2.project_mount)
+        image_container = _container_path(first_frame, project_root, config.sam2.project_mount)
+        output_container = _container_path(mask_output, project_root, config.sam2.project_mount)
+
+        # 2. Run inference inside container using the mounted project directory.
+        cmd = (
+            f"PYTHONPATH=/opt/sam2/server python {quote(script_container)} "
+            f"--image {quote(image_container)} "
+            f"--points {quote(points_str)} "
+            f"--labels {quote(labels_str)} "
+            f"--output {quote(output_container)} "
+            f"--checkpoint {quote(config.sam2.checkpoint)} "
+            f"--config {quote(config.sam2.config_file)}"
+        )
         result = subprocess.run(
-            [
-                "docker", "exec", container,
-                "bash", "-c",
-                f"PYTHONPATH=/opt/sam2/server python /opt/sam2_cli.py "
-                f"--image {container_image} "
-                f"--points '{points_str}' "
-                f"--labels '{labels_str}' "
-                f"--output {container_output} "
-                f"--checkpoint {config.sam2.checkpoint} "
-                f"--config {config.sam2.config_file}",
-            ],
+            ["docker", "exec", container, "bash", "-c", cmd],
             capture_output=True,
             text=True,
         )
@@ -102,17 +105,26 @@ class Sam2MaskStage(BaseStage):
                 f"STDERR: {result.stderr}"
             )
 
-        # 4. Parse JSON output from CLI
-        json.loads(result.stdout.strip().split("\n")[-1])
-
-        # 5. Copy mask back to host
-        mask_output = output_dir / first_frame.name
-        subprocess.run(
-            ["docker", "cp", f"{container}:{container_output}", str(mask_output)],
-            check=True,
-        )
+        # 3. Parse JSON output from CLI
+        payload = json.loads(result.stdout.strip().split("\n")[-1])
 
         if not mask_output.exists():
             raise StageError(f"SAM2 completed but mask not found at {mask_output}")
+
+        metadata = {
+            "frame": first_frame.name,
+            "image": str(first_frame),
+            "mask": str(mask_output),
+            "points": points,
+            "labels": labels,
+            "score": payload.get("score"),
+            "foreground_pixels": payload.get("foreground_pixels"),
+            "mask_shape": payload.get("mask_shape"),
+            "cli": config.sam2.pic_cli,
+        }
+        (output_dir / "metadata.json").write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
         return output_dir

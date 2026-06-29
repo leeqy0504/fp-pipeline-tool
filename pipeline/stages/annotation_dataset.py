@@ -1,35 +1,554 @@
-"""Annotation dataset pipeline placeholder stages."""
+"""Annotation dataset stages: QA, review pack, and YOLO export."""
 
+import base64
+import json
+import shutil
+import struct
+import zlib
+from dataclasses import dataclass
 from pathlib import Path
 
 from pipeline.config import PipelineConfig
+from pipeline.manifest import load_manifest_for_config
 from pipeline.stages import register_stage
 from pipeline.stages.base import BaseStage, StageError
 from pipeline.stages.context import StageContext
 
 
-class _NotImplementedAnnotationStage(BaseStage):
-    name = ""
-    description = ""
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
-    def run(self, config: PipelineConfig, output_dir: Path,
-            context: StageContext | None = None) -> Path:
-        raise StageError(f"{self.name} is not implemented yet: {self.description}")
+
+@dataclass
+class MaskStats:
+    frame: str
+    width: int
+    height: int
+    area: int
+    bbox_xyxy: list[int] | None
+    touches_edge: bool
+
+
+def _stage_input(
+    config: PipelineConfig,
+    context: StageContext | None,
+    stage_name: str,
+) -> Path | None:
+    if context and context.data and context.data.get_input(stage_name):
+        return context.input(stage_name)
+    manifest = load_manifest_for_config(config)
+    output = manifest.get_output_dir(stage_name)
+    return Path(output) if output else None
+
+
+def _png_size(path: Path) -> tuple[int, int]:
+    with open(path, "rb") as f:
+        sig = f.read(8)
+        if sig != PNG_SIGNATURE:
+            raise StageError(f"Not a PNG file: {path}")
+        length = struct.unpack(">I", f.read(4))[0]
+        chunk_type = f.read(4)
+        if chunk_type != b"IHDR" or length < 8:
+            raise StageError(f"Invalid PNG header: {path}")
+        data = f.read(length)
+    width, height = struct.unpack(">II", data[:8])
+    return int(width), int(height)
+
+
+def _png_scanlines(path: Path) -> tuple[int, int, int, bytes]:
+    with open(path, "rb") as f:
+        raw = f.read()
+    if not raw.startswith(PNG_SIGNATURE):
+        raise StageError(f"Not a PNG file: {path}")
+
+    offset = len(PNG_SIGNATURE)
+    width = height = color_type = bit_depth = None
+    idat = bytearray()
+    while offset < len(raw):
+        if offset + 8 > len(raw):
+            break
+        length = struct.unpack(">I", raw[offset:offset + 4])[0]
+        chunk_type = raw[offset + 4:offset + 8]
+        data_start = offset + 8
+        data_end = data_start + length
+        data = raw[data_start:data_end]
+        offset = data_end + 4
+        if chunk_type == b"IHDR":
+            width, height = struct.unpack(">II", data[:8])
+            bit_depth = data[8]
+            color_type = data[9]
+        elif chunk_type == b"IDAT":
+            idat.extend(data)
+        elif chunk_type == b"IEND":
+            break
+
+    if width is None or height is None or color_type is None or bit_depth != 8:
+        raise StageError(f"Unsupported PNG mask format: {path}")
+    if color_type not in (0, 2, 4, 6):
+        raise StageError(f"Unsupported PNG color type {color_type}: {path}")
+
+    decompressed = zlib.decompress(bytes(idat))
+    return int(width), int(height), int(color_type), decompressed
+
+
+def _channels_for_color_type(color_type: int) -> int:
+    return {0: 1, 2: 3, 4: 2, 6: 4}[color_type]
+
+
+def _paeth(a: int, b: int, c: int) -> int:
+    p = a + b - c
+    pa = abs(p - a)
+    pb = abs(p - b)
+    pc = abs(p - c)
+    if pa <= pb and pa <= pc:
+        return a
+    if pb <= pc:
+        return b
+    return c
+
+
+def _unfilter_scanline(filter_type: int, row: bytearray, prev: bytearray, bpp: int) -> bytearray:
+    out = bytearray(row)
+    if filter_type == 0:
+        return out
+    for i in range(len(out)):
+        left = out[i - bpp] if i >= bpp else 0
+        up = prev[i] if prev else 0
+        up_left = prev[i - bpp] if prev and i >= bpp else 0
+        if filter_type == 1:
+            out[i] = (out[i] + left) & 0xFF
+        elif filter_type == 2:
+            out[i] = (out[i] + up) & 0xFF
+        elif filter_type == 3:
+            out[i] = (out[i] + ((left + up) // 2)) & 0xFF
+        elif filter_type == 4:
+            out[i] = (out[i] + _paeth(left, up, up_left)) & 0xFF
+        else:
+            raise StageError(f"Unsupported PNG filter type: {filter_type}")
+    return out
+
+
+def _mask_stats(path: Path) -> MaskStats:
+    width, height, color_type, data = _png_scanlines(path)
+    channels = _channels_for_color_type(color_type)
+    stride = width * channels
+    bpp = channels
+    pos = 0
+    prev = bytearray(stride)
+    area = 0
+    min_x = width
+    min_y = height
+    max_x = -1
+    max_y = -1
+
+    for y in range(height):
+        if pos >= len(data):
+            raise StageError(f"PNG scanline data ended early: {path}")
+        filter_type = data[pos]
+        pos += 1
+        row = bytearray(data[pos:pos + stride])
+        pos += stride
+        row = _unfilter_scanline(filter_type, row, prev, bpp)
+        prev = row
+        for x in range(width):
+            value = row[x * channels]
+            if value > 0:
+                area += 1
+                if x < min_x:
+                    min_x = x
+                if y < min_y:
+                    min_y = y
+                if x > max_x:
+                    max_x = x
+                if y > max_y:
+                    max_y = y
+
+    bbox = [min_x, min_y, max_x + 1, max_y + 1] if area else None
+    touches_edge = bool(bbox and (bbox[0] <= 0 or bbox[1] <= 0 or bbox[2] >= width or bbox[3] >= height))
+    return MaskStats(
+        frame=path.name,
+        width=width,
+        height=height,
+        area=area,
+        bbox_xyxy=bbox,
+        touches_edge=touches_edge,
+    )
+
+
+def _bbox_iou(a: list[int] | None, b: list[int] | None) -> float | None:
+    if not a or not b:
+        return None
+    x1 = max(a[0], b[0])
+    y1 = max(a[1], b[1])
+    x2 = min(a[2], b[2])
+    y2 = min(a[3], b[3])
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    area_a = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
+    area_b = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+    union = area_a + area_b - inter
+    if union <= 0:
+        return None
+    return inter / union
+
+
+def _bbox_center_shift(a: list[int] | None, b: list[int] | None, width: int, height: int) -> float | None:
+    if not a or not b:
+        return None
+    ax = (a[0] + a[2]) / 2
+    ay = (a[1] + a[3]) / 2
+    bx = (b[0] + b[2]) / 2
+    by = (b[1] + b[3]) / 2
+    diagonal = (width ** 2 + height ** 2) ** 0.5
+    if diagonal <= 0:
+        return None
+    return (((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5) / diagonal
+
+
+def _review_status_path(mask_qa_dir: Path) -> Path:
+    return mask_qa_dir / "review_status.json"
+
+
+def _read_review_status(mask_qa_dir: Path) -> dict:
+    path = _review_status_path(mask_qa_dir)
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _image_data_uri(path: Path) -> str:
+    mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _yolo_line(class_id: int, box: list[int], width: int, height: int) -> str:
+    x1, y1, x2, y2 = box
+    cx = ((x1 + x2) / 2) / width
+    cy = ((y1 + y2) / 2) / height
+    bw = (x2 - x1) / width
+    bh = (y2 - y1) / height
+    return f"{class_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n"
 
 
 @register_stage("mask_qa")
-class MaskQaStage(_NotImplementedAnnotationStage):
+class MaskQaStage(BaseStage):
     name = "mask_qa"
-    description = "mask quality rules and frame review status"
+
+    def run(self, config: PipelineConfig, output_dir: Path,
+            context: StageContext | None = None) -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        video_dir = _stage_input(config, context, "sam2_video_propagation")
+        if not video_dir:
+            raise StageError("No sam2_video_propagation output found")
+        masks_dir = video_dir / "masks"
+        self.check_input_path(str(masks_dir), "SAM2 propagated masks directory")
+        mask_files = sorted(masks_dir.glob("*.png"))
+        if not mask_files:
+            raise StageError(f"No propagated mask PNG files found in {masks_dir}")
+
+        min_area = max(1, int(config.detection_dataset.min_box_area))
+        max_area_ratio = 0.90
+        min_area_ratio = 0.0002
+        min_iou = 0.15
+        max_center_shift = 0.28
+
+        frames = []
+        accepted = []
+        rejected = []
+        suspect = []
+        previous_bbox = None
+        previous_stats = None
+        for mask_file in mask_files:
+            stats = _mask_stats(mask_file)
+            image_area = stats.width * stats.height
+            flags: list[str] = []
+            state = "accepted"
+
+            if stats.area < min_area or stats.area < image_area * min_area_ratio:
+                flags.append("mask_area_too_small")
+                state = "rejected"
+            if stats.area > image_area * max_area_ratio:
+                flags.append("mask_area_too_large")
+                state = "rejected"
+            if stats.touches_edge:
+                flags.append("mask_touches_image_edge")
+                if state != "rejected":
+                    state = "suspect"
+            if previous_bbox and stats.bbox_xyxy:
+                iou = _bbox_iou(previous_bbox, stats.bbox_xyxy)
+                shift = _bbox_center_shift(previous_bbox, stats.bbox_xyxy, stats.width, stats.height)
+                if iou is not None and iou < min_iou:
+                    flags.append("adjacent_bbox_iou_low")
+                    if state != "rejected":
+                        state = "suspect"
+                if shift is not None and shift > max_center_shift:
+                    flags.append("bbox_jump_too_large")
+                    if state != "rejected":
+                        state = "suspect"
+            else:
+                iou = None
+                shift = None
+
+            row = {
+                "frame": stats.frame,
+                "mask": str(mask_file),
+                "width": stats.width,
+                "height": stats.height,
+                "area": stats.area,
+                "area_ratio": stats.area / image_area if image_area else 0,
+                "bbox_xyxy": stats.bbox_xyxy,
+                "touches_edge": stats.touches_edge,
+                "previous_frame": previous_stats.frame if previous_stats else None,
+                "previous_iou": iou,
+                "center_shift_ratio": shift,
+                "flags": flags,
+                "state": state,
+            }
+            frames.append(row)
+            if state == "accepted":
+                accepted.append(stats.frame)
+            elif state == "rejected":
+                rejected.append(stats.frame)
+            else:
+                suspect.append(stats.frame)
+            if stats.bbox_xyxy:
+                previous_bbox = stats.bbox_xyxy
+                previous_stats = stats
+
+        report = {
+            "task": config.task,
+            "stage": self.name,
+            "source_masks": str(masks_dir),
+            "rules": {
+                "min_box_area": min_area,
+                "min_area_ratio": min_area_ratio,
+                "max_area_ratio": max_area_ratio,
+                "min_adjacent_iou": min_iou,
+                "max_center_shift_ratio": max_center_shift,
+            },
+            "summary": {
+                "total": len(frames),
+                "accepted": len(accepted),
+                "suspect": len(suspect),
+                "rejected": len(rejected),
+            },
+            "frames": frames,
+        }
+        _write_json(output_dir / "qa_report.json", report)
+        _write_json(_review_status_path(output_dir), {
+            "task": config.task,
+            "source": "mask_qa",
+            "frames": {
+                row["frame"]: {
+                    "state": row["state"],
+                    "flags": row["flags"],
+                    "manual": False,
+                }
+                for row in frames
+            },
+        })
+        return output_dir
 
 
 @register_stage("review_pack")
-class ReviewPackStage(_NotImplementedAnnotationStage):
+class ReviewPackStage(BaseStage):
     name = "review_pack"
-    description = "contact sheet and review artifacts"
+
+    def run(self, config: PipelineConfig, output_dir: Path,
+            context: StageContext | None = None) -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        mask_qa_dir = _stage_input(config, context, "mask_qa")
+        if not mask_qa_dir:
+            raise StageError("No mask_qa output found")
+        report_path = mask_qa_dir / "qa_report.json"
+        self.check_input_path(str(report_path), "Mask QA report")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        task_dir = Path(config.input.rgbd_dir)
+        rgb_dir = task_dir / "rgb"
+        masks_source = Path(report["source_masks"])
+
+        items = []
+        for row in report["frames"]:
+            image_path = rgb_dir / row["frame"]
+            mask_path = masks_source / row["frame"]
+            item = {
+                **row,
+                "image": str(image_path) if image_path.exists() else None,
+                "mask": str(mask_path) if mask_path.exists() else None,
+            }
+            if image_path.exists():
+                item["image_data_uri"] = _image_data_uri(image_path)
+            if mask_path.exists():
+                item["mask_data_uri"] = _image_data_uri(mask_path)
+            items.append(item)
+
+        html = _render_review_html(config.task, report["summary"], items)
+        (output_dir / "index.html").write_text(html, encoding="utf-8")
+        _write_json(output_dir / "review_pack.json", {
+            "task": config.task,
+            "qa_report": str(report_path),
+            "review_status": str(_review_status_path(mask_qa_dir)),
+            "summary": report["summary"],
+            "items": [
+                {k: v for k, v in item.items() if not k.endswith("_data_uri")}
+                for item in items
+            ],
+        })
+        return output_dir
+
+
+def _render_review_html(task: str, summary: dict, items: list[dict]) -> str:
+    cards = []
+    for item in items:
+        flags = ", ".join(item.get("flags") or []) or "-"
+        image = item.get("image_data_uri")
+        mask = item.get("mask_data_uri")
+        image_html = f'<img src="{image}" alt="{item["frame"]} RGB">' if image else '<div class="missing">No image</div>'
+        mask_html = f'<img src="{mask}" alt="{item["frame"]} mask">' if mask else '<div class="missing">No mask</div>'
+        cards.append(f"""
+        <article class="frame {item['state']}">
+          <header><strong>{item['frame']}</strong><span>{item['state']}</span></header>
+          <div class="pair">{image_html}{mask_html}</div>
+          <dl>
+            <dt>bbox</dt><dd>{item.get('bbox_xyxy')}</dd>
+            <dt>area</dt><dd>{item.get('area')}</dd>
+            <dt>flags</dt><dd>{flags}</dd>
+          </dl>
+        </article>
+        """)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>{task} review pack</title>
+  <style>
+    body {{ margin:0; background:#07070c; color:#e4e4ec; font:13px system-ui,sans-serif; }}
+    main {{ padding:24px; }}
+    h1 {{ font-size:20px; margin:0 0 4px; }}
+    .summary {{ color:#8888a0; margin-bottom:20px; }}
+    .grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }}
+    .frame {{ border:1px solid #1e1e33; border-radius:4px; background:#0d0d1a; padding:12px; }}
+    .frame.suspect {{ border-color:#f0a030; }}
+    .frame.rejected {{ border-color:#ff4d5a; opacity:.72; }}
+    header {{ display:flex; justify-content:space-between; margin-bottom:8px; }}
+    header span {{ color:#00d4aa; font-family:monospace; }}
+    .suspect header span {{ color:#f0a030; }}
+    .rejected header span {{ color:#ff4d5a; }}
+    .pair {{ display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:start; }}
+    img {{ width:100%; background:#050510; border:1px solid #1e1e33; object-fit:contain; }}
+    dl {{ display:grid; grid-template-columns:52px 1fr; gap:4px 8px; color:#8888a0; font-family:monospace; font-size:11px; }}
+    dt {{ color:#5a5a72; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{task} review pack</h1>
+    <p class="summary">total {summary.get('total', 0)} / accepted {summary.get('accepted', 0)} / suspect {summary.get('suspect', 0)} / rejected {summary.get('rejected', 0)}</p>
+    <section class="grid">{''.join(cards)}</section>
+  </main>
+</body>
+</html>
+"""
 
 
 @register_stage("detection_dataset_export")
-class DetectionDatasetExportStage(_NotImplementedAnnotationStage):
+class DetectionDatasetExportStage(BaseStage):
     name = "detection_dataset_export"
-    description = "YOLO dataset export from reviewed masks"
+
+    def run(self, config: PipelineConfig, output_dir: Path,
+            context: StageContext | None = None) -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        mask_qa_dir = _stage_input(config, context, "mask_qa")
+        if not mask_qa_dir:
+            raise StageError("No mask_qa output found")
+        report_path = mask_qa_dir / "qa_report.json"
+        self.check_input_path(str(report_path), "Mask QA report")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        review = _read_review_status(mask_qa_dir)
+        review_frames = review.get("frames", {})
+        rgb_dir = Path(config.input.rgbd_dir) / "rgb"
+        masks_dir = Path(report["source_masks"])
+        images_out = output_dir / "images"
+        labels_out = output_dir / "labels"
+        masks_out = output_dir / "masks"
+        images_out.mkdir(exist_ok=True)
+        labels_out.mkdir(exist_ok=True)
+        masks_out.mkdir(exist_ok=True)
+
+        annotations = []
+        skipped = []
+        for row in report["frames"]:
+            frame = row["frame"]
+            review_state = review_frames.get(frame, {}).get("state", row["state"])
+            if review_state == "rejected":
+                skipped.append({"image": frame, "reason": "rejected"})
+                continue
+            if not row.get("bbox_xyxy"):
+                skipped.append({"image": frame, "reason": "missing_bbox"})
+                continue
+
+            image_path = rgb_dir / frame
+            mask_path = masks_dir / frame
+            if not image_path.exists():
+                skipped.append({"image": frame, "reason": "missing_image"})
+                continue
+            if not mask_path.exists():
+                skipped.append({"image": frame, "reason": "missing_mask"})
+                continue
+
+            dst_image = images_out / frame
+            dst_mask = masks_out / frame
+            if config.detection_dataset.copy_images:
+                shutil.copy2(image_path, dst_image)
+            else:
+                dst_image = image_path
+            shutil.copy2(mask_path, dst_mask)
+
+            label_path = labels_out / f"{Path(frame).stem}.txt"
+            label_path.write_text(
+                _yolo_line(
+                    config.detection_dataset.class_id,
+                    row["bbox_xyxy"],
+                    int(row["width"]),
+                    int(row["height"]),
+                ),
+                encoding="utf-8",
+            )
+            annotations.append({
+                "image": str(dst_image),
+                "mask": str(dst_mask),
+                "label": str(label_path),
+                "frame": frame,
+                "class_id": config.detection_dataset.class_id,
+                "class_name": config.detection_dataset.class_name,
+                "bbox_xyxy": row["bbox_xyxy"],
+                "qa_state": row["state"],
+                "review_state": review_state,
+                "flags": row.get("flags", []),
+            })
+
+        if not annotations:
+            raise StageError("No accepted frames available for YOLO dataset export")
+
+        dataset_yaml = (
+            f"path: {output_dir.resolve()}\n"
+            "train: images\n"
+            "val: images\n"
+            "names:\n"
+            f"  {config.detection_dataset.class_id}: {config.detection_dataset.class_name}\n"
+        )
+        (output_dir / "dataset.yaml").write_text(dataset_yaml, encoding="utf-8")
+        _write_json(output_dir / "annotations.json", {
+            "task": config.task,
+            "format": "yolo",
+            "source": "sam2_masks",
+            "class_id": config.detection_dataset.class_id,
+            "class_name": config.detection_dataset.class_name,
+            "count": len(annotations),
+            "skipped": skipped,
+            "annotations": annotations,
+        })
+        return output_dir

@@ -174,8 +174,9 @@ class Scheduler:
             config = load_config(cfg_path, project_root=self.project_root)
             config.run_id = job.job_id
             orch = PipelineOrchestrator()
-            if job.preset and not str(cfg_path).endswith("task.yaml"):
+            if job.preset:
                 config.preset = job.preset
+                config.pipeline_stages = orch.resolve_preset(job.preset)
             stages = orch.resolve_stages(config)
             enabled_stages = self._enabled_stages(stages, job.stage_selection)
             skipped_stages = [stage for stage in stages if stage not in enabled_stages]

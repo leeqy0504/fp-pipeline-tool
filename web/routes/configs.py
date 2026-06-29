@@ -77,7 +77,7 @@ def _list_pipelines(project_root: Path) -> list[dict]:
     pipeline_dir = project_root / "configs" / "pipelines"
     items = []
     if not pipeline_dir.exists():
-        return [{"id": "foundationpose", "name": "foundationpose"}]
+        return [{"id": "pose6d", "name": "pose6d"}]
     for path in sorted(pipeline_dir.glob("*.y*ml")):
         data = _read_yaml_file(path)
         pipeline_id = data.get("preset") or path.stem

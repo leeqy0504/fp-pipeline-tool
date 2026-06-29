@@ -4,16 +4,17 @@
 
 {% block head %}
 <style>
+.task-headline { display:flex; align-items:center; gap:10px; margin-top:6px; }
+.pipeline-pill { border:1px solid var(--border); border-radius:999px; padding:2px 8px; color:var(--accent); font-family:var(--font-mono); font-size:11px; }
 .stage-list { margin-bottom: 20px; }
 .stage-row {
-  display: flex; align-items: center; gap: 10px;
+  display: grid; grid-template-columns: 18px minmax(140px, 1fr) auto auto; align-items: center; gap: 10px;
   padding: 8px 12px; border-bottom: 1px solid var(--border);
   font-family: var(--font-mono); font-size: 12px;
 }
 .stage-row:last-child { border-bottom: none; }
 .stage-icon { font-size: 14px; flex-shrink: 0; width: 18px; }
-.stage-name { width: 170px; flex-shrink: 0; }
-.stage-status { width: 90px; flex-shrink: 0; }
+.stage-name { min-width: 0; }
 .stage-dur { color: var(--text-muted); font-size: 11px; }
 .stage-toggle-row {
   display: grid; grid-template-columns: 1fr auto; gap: 12px;
@@ -32,169 +33,329 @@
 }
 .flow-item.skipped { color: var(--text-muted); }
 .detail-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.preview-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:10px; }
+.preview-tile {
+  background:var(--bg-primary); border:1px solid var(--border); border-radius:var(--radius);
+  overflow:hidden; min-width:0;
+}
+.preview-tile img {
+  display:block; width:100%; aspect-ratio:4/3; object-fit:contain; background:#050510;
+}
+.preview-tile figcaption {
+  padding:6px 8px; color:var(--text-muted); font-family:var(--font-mono); font-size:10px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.metrics-row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+.metric {
+  border:1px solid var(--border); border-radius:var(--radius); padding:8px 10px;
+  min-width:94px; background:var(--bg-primary);
+}
+.metric strong { display:block; font-size:16px; color:var(--text); }
+.metric span { color:var(--text-muted); font-size:11px; }
+.artifact-table { width:100%; }
+.artifact-table td, .artifact-table th { vertical-align:top; }
+.split-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.empty-panel { padding:16px; color:var(--text-muted); font-size:12px; border:1px dashed var(--border); border-radius:var(--radius); }
+@media (max-width: 760px) {
+  .split-2 { grid-template-columns:1fr; }
+  .stage-row { grid-template-columns:18px 1fr; }
+  .stage-row .badge, .stage-row .stage-dur { grid-column:2; }
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="flex justify-between items-center mb-16">
-  <div>
-    <h1>{{ task_name }}</h1>
-    <p class="text-dim text-sm">任务详情</p>
-  </div>
-  <a href="/tasks" class="btn btn-secondary btn-sm">&larr; 返回 Task</a>
-</div>
-
-<div class="section">
-  <h3>步骤状态</h3>
-  <div class="card mb-16">
-    {% if manifest and manifest.stages %}
-    <div class="stage-list">
-      {% for sname, sdata in manifest.stages.items() %}
-        <div class="stage-row">
-          {% if sdata.status == 'done' %}
-            <span class="stage-icon text-accent">&#x2713;</span>
-            <span class="stage-name">{{ sname }}</span>
-            <span class="badge badge-completed">已完成</span>
-            <span class="stage-dur">{{ "%.1fs"|format(sdata.duration_s) if sdata.duration_s else '' }}</span>
-          {% elif sdata.status == 'failed' %}
-            <span class="stage-icon text-red">&#x2717;</span>
-            <span class="stage-name">{{ sname }}</span>
-            <span class="badge badge-failed">失败</span>
-          {% elif sdata.status == 'skipped' %}
-            <span class="stage-icon text-muted">&#x2717;</span>
-            <span class="stage-name">{{ sname }}</span>
-            <span class="badge badge-idle">Skip</span>
-          {% else %}
-            <span class="stage-icon text-dim">&#x25CB;</span>
-            <span class="stage-name">{{ sname }}</span>
-            <span class="badge badge-pending">{{ sdata.status }}</span>
-          {% endif %}
-        </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="text-muted text-sm" style="padding:12px">暂无 manifest 数据。运行 Pipeline 后会生成步骤状态。</p>
-    {% endif %}
-  </div>
-</div>
-
-<div class="section"
-     x-data="taskActions"
-     x-init="init($el)"
+<div x-data="taskPage()" x-init="start($el)"
      data-task-name="{{ task_name }}"
      data-running-job-id="{{ running_job_id or '' }}">
-  <h3>操作</h3>
-  <div class="card">
-    <div class="btn-group mb-12">
-      <button class="btn btn-primary"
-              @click="runJob()"
-              :disabled="running || submitting || deleting || cloning">
-        <span x-text="submitting ? '提交中...' : '运行 Pipeline'"></span>
-      </button>
-      <button class="btn btn-danger"
-              @click="stopJob()"
-              :disabled="!running || submitting"
-              x-show="running">
-        停止 Job
-      </button>
-      <a href="/tasks/{{ task_name }}/pick" class="btn btn-secondary">
-        标注点位
-      </a>
-      <button class="btn btn-secondary"
-              @click="resetTask()"
-              :disabled="running || submitting">
-        Reset Manifest
-      </button>
-      <button class="btn btn-secondary"
-              @click="cloneTask()"
-              :disabled="submitting || deleting || cloning">
-        <span x-text="cloning ? '复制中...' : 'Clone Task'"></span>
-      </button>
-      <button class="btn btn-danger"
-              title="删除 Task"
-              @click="deleteTask()"
-              :disabled="running || submitting || deleting">
-        <span class="icon-trash" aria-hidden="true"></span>
-        <span x-text="deleting ? '删除中...' : 'Delete'"></span>
-      </button>
-    </div>
-
-    <div x-show="error" class="alert alert-error" x-text="error"></div>
-    <div x-show="success" class="alert alert-success" x-text="success"></div>
-
-    <div x-show="currentJobId" class="text-sm text-muted" style="font-family:var(--font-mono)">
-      Job: <span x-text="currentJobId" class="text-accent"></span>
-      <span x-show="jobStatus" x-text="' - ' + statusLabel(jobStatus)"
-            :class="'badge badge-' + (jobStatus === 'running' ? 'running' : jobStatus === 'failed' ? 'failed' : jobStatus === 'stopped' ? 'stopped' : 'completed')"></span>
-    </div>
-
-    <div class="form-group mt-8" style="max-width:240px">
-      <label>Preset</label>
-      <select class="select" x-model="preset" @change="loadDefaultStages()">
-        <option value="pose6d">pose6d</option>
-        <option value="foundationpose">foundationpose</option>
-      </select>
-    </div>
-
-    <div class="form-group">
-      <button class="btn btn-secondary btn-sm" @click="configOpen = !configOpen">
-        <span x-text="configOpen ? '收起配置' : '展开配置'"></span>
-      </button>
-    </div>
-
-    <div x-show="configOpen" x-transition class="mb-16">
-      <h3>Pipeline 步骤选择</h3>
-      <template x-for="stage in stages" :key="stage">
-        <div class="stage-toggle-row">
-          <div>
-            <div class="mono" x-text="stageLabel(stage)"></div>
-            <div class="text-muted text-sm" x-text="stage"></div>
-          </div>
-          <label class="switch">
-            <input type="checkbox" :value="stage" x-model="enabledStages">
-            <span x-text="enabledStages.includes(stage) ? 'Enable' : 'Skip'"></span>
-          </label>
-        </div>
-      </template>
-      <div class="btn-group mt-8">
-        <button class="btn btn-secondary btn-sm" @click="saveStageSettings()" :disabled="savingSettings">
-          <span x-text="savingSettings ? '保存中...' : '保存配置'"></span>
-        </button>
-        <button class="btn btn-secondary btn-sm" @click="enableAllStages()">全部 Enable</button>
+  <div class="flex justify-between items-center mb-16">
+    <div>
+      <h1>{{ task_name }}</h1>
+      <div class="task-headline">
+        <p class="text-dim text-sm">任务详情</p>
+        <span class="pipeline-pill" x-text="pipelineLabel"></span>
       </div>
     </div>
+    <a href="/tasks" class="btn btn-secondary btn-sm">&larr; 返回 Task</a>
+  </div>
 
-    <h3>提交前执行流程</h3>
-    <div class="execution-flow">
-      <template x-for="stage in stages" :key="'flow-' + stage">
-        <div class="flow-item" :class="enabledStages.includes(stage) ? '' : 'skipped'">
-          <span x-text="enabledStages.includes(stage) ? '✓' : '✗'"></span>
-          <span x-text="stageLabel(stage)"></span>
-          <span x-show="!enabledStages.includes(stage)">(Skip)</span>
+  <div class="section">
+    <h3>步骤状态</h3>
+    <div class="card mb-16">
+      {% if manifest and manifest.stages %}
+      <div class="stage-list">
+        {% for sname, sdata in manifest.stages.items() %}
+          <div class="stage-row">
+            {% if sdata.status == 'done' %}
+              <span class="stage-icon text-accent">&#x2713;</span>
+              <span class="stage-name">{{ sname }}</span>
+              <span class="badge badge-completed">已完成</span>
+              <span class="stage-dur">{{ "%.1fs"|format(sdata.duration_s) if sdata.duration_s else '' }}</span>
+            {% elif sdata.status == 'failed' %}
+              <span class="stage-icon text-red">&#x2717;</span>
+              <span class="stage-name">{{ sname }}</span>
+              <span class="badge badge-failed">失败</span>
+              <span class="stage-dur"></span>
+            {% elif sdata.status == 'skipped' %}
+              <span class="stage-icon text-muted">&#x2717;</span>
+              <span class="stage-name">{{ sname }}</span>
+              <span class="badge badge-idle">Skip</span>
+              <span class="stage-dur"></span>
+            {% else %}
+              <span class="stage-icon text-dim">&#x25CB;</span>
+              <span class="stage-name">{{ sname }}</span>
+              <span class="badge badge-pending">{{ sdata.status }}</span>
+              <span class="stage-dur"></span>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-muted text-sm" style="padding:12px">暂无 manifest 数据。运行 Pipeline 后会生成步骤状态。</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>操作</h3>
+    <div class="card">
+      <div class="btn-group mb-12">
+        <button class="btn btn-primary"
+                @click="runJob()"
+                :disabled="running || submitting || deleting || cloning">
+          <span x-text="submitting ? '提交中...' : '运行 Pipeline'"></span>
+        </button>
+        <button class="btn btn-danger"
+                @click="stopJob()"
+                :disabled="!running || submitting"
+                x-show="running">
+          停止 Job
+        </button>
+        <a href="/tasks/{{ task_name }}/pick" class="btn btn-secondary">
+          标注点位
+        </a>
+        <button class="btn btn-secondary"
+                @click="resetTask()"
+                :disabled="running || submitting">
+          Reset Manifest
+        </button>
+        <button class="btn btn-secondary"
+                @click="cloneTask()"
+                :disabled="submitting || deleting || cloning">
+          <span x-text="cloning ? '复制中...' : 'Clone Task'"></span>
+        </button>
+        <button class="btn btn-danger"
+                title="删除 Task"
+                @click="deleteTask()"
+                :disabled="running || submitting || deleting">
+          <span class="icon-trash" aria-hidden="true"></span>
+          <span x-text="deleting ? '删除中...' : 'Delete'"></span>
+        </button>
+      </div>
+
+      <div x-show="error" class="alert alert-error" x-text="error"></div>
+      <div x-show="success" class="alert alert-success" x-text="success"></div>
+
+      <div x-show="currentJobId" class="text-sm text-muted mb-12" style="font-family:var(--font-mono)">
+        Job: <span x-text="currentJobId" class="text-accent"></span>
+        <span x-show="jobStatus" x-text="' - ' + statusLabel(jobStatus)"
+              :class="'badge badge-' + (jobStatus === 'running' ? 'running' : jobStatus === 'failed' ? 'failed' : jobStatus === 'stopped' ? 'stopped' : 'completed')"></span>
+      </div>
+
+      <div class="form-group" style="max-width:280px">
+        <label>Pipeline</label>
+        <select class="select" x-model="preset" @change="loadDefaultStages()">
+          <option value="pose6d">pose6d</option>
+          <option value="annotation_dataset">annotation_dataset</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <button class="btn btn-secondary btn-sm" @click="configOpen = !configOpen">
+          <span x-text="configOpen ? '收起配置' : '展开配置'"></span>
+        </button>
+      </div>
+
+      <div x-show="configOpen" x-transition class="mb-16">
+        <h3>Pipeline 步骤选择</h3>
+        <template x-for="stage in stages" :key="stage">
+          <div class="stage-toggle-row">
+            <div>
+              <div class="mono" x-text="stageLabel(stage)"></div>
+              <div class="text-muted text-sm" x-text="stage"></div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" :value="stage" x-model="enabledStages">
+              <span x-text="enabledStages.includes(stage) ? 'Enable' : 'Skip'"></span>
+            </label>
+          </div>
+        </template>
+        <div class="btn-group mt-8">
+          <button class="btn btn-secondary btn-sm" @click="saveStageSettings()" :disabled="savingSettings">
+            <span x-text="savingSettings ? '保存中...' : '保存配置'"></span>
+          </button>
+          <button class="btn btn-secondary btn-sm" @click="enableAllStages()">全部 Enable</button>
+        </div>
+      </div>
+
+      <h3>提交前执行流程</h3>
+      <div class="execution-flow">
+        <template x-for="stage in stages" :key="'flow-' + stage">
+          <div class="flow-item" :class="enabledStages.includes(stage) ? '' : 'skipped'">
+            <span x-text="enabledStages.includes(stage) ? '✓' : '✗'"></span>
+            <span x-text="stageLabel(stage)"></span>
+            <span x-show="!enabledStages.includes(stage)">(Skip)</span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>数据预览</h3>
+    <div class="card">
+      <div class="metrics-row">
+        <div class="metric"><strong x-text="artifacts.dataset?.rgb?.length || 0"></strong><span>RGB 样本</span></div>
+        <div class="metric"><strong x-text="artifacts.dataset?.depth?.length || 0"></strong><span>Depth 样本</span></div>
+        <div class="metric"><strong x-text="artifacts.dataset?.views?.length || 0"></strong><span>多视角图片</span></div>
+      </div>
+      <h3>RGB</h3>
+      <div x-html="previewGrid(artifacts.dataset?.rgb || [])"></div>
+      <template x-if="(artifacts.dataset?.views || []).length">
+        <div style="margin-top:16px">
+          <h3>多视角</h3>
+          <div x-html="previewGrid(artifacts.dataset.views)"></div>
         </div>
       </template>
     </div>
   </div>
-</div>
 
-<div class="section">
-  <h3>Job 历史</h3>
-  <div class="card">
-    <p class="text-sm text-dim mb-8">查看此 Task 的所有运行记录。</p>
-    <a href="/history?task={{ task_name }}" class="btn btn-secondary btn-sm">
-      查看 Job 历史 &rarr;
-    </a>
-  </div>
-</div>
-
-<div class="section">
-  <h3>实时日志</h3>
-  <div class="card" x-data="logTerminal()" x-init="init()">
-    <div class="terminal-header">
-      <span class="terminal-status" :class="wsState" x-text="wsLabel"></span>
+  <template x-if="preset === 'annotation_dataset'">
+    <div class="section">
+      <h3>Annotation 数据集结果</h3>
+      <div class="card">
+        <template x-if="artifacts.annotation">
+          <div>
+            <div class="metrics-row">
+              <div class="metric"><strong x-text="artifacts.annotation.qa_summary?.total ?? '-'"></strong><span>总帧数</span></div>
+              <div class="metric"><strong x-text="artifacts.annotation.qa_summary?.accepted ?? '-'"></strong><span>Accepted</span></div>
+              <div class="metric"><strong x-text="artifacts.annotation.qa_summary?.suspect ?? '-'"></strong><span>Suspect</span></div>
+              <div class="metric"><strong x-text="artifacts.annotation.qa_summary?.rejected ?? '-'"></strong><span>Rejected</span></div>
+              <div class="metric"><strong x-text="artifacts.annotation.annotations?.count ?? '-'"></strong><span>导出样本</span></div>
+            </div>
+            <div class="btn-group mb-16">
+              <template x-if="artifacts.annotation.review_pack">
+                <a class="btn btn-secondary btn-sm" :href="artifacts.annotation.review_pack.url" target="_blank">打开预览包</a>
+              </template>
+              <template x-if="artifacts.annotation.dataset_yaml">
+                <a class="btn btn-secondary btn-sm" :href="artifacts.annotation.dataset_yaml.url" target="_blank">查看 dataset.yaml</a>
+              </template>
+            </div>
+            <div class="split-2">
+              <div>
+                <h3>传播 Mask</h3>
+                <div x-html="previewGrid(artifacts.annotation.propagated_masks || [])"></div>
+              </div>
+              <div>
+                <h3>导出图片</h3>
+                <div x-html="previewGrid(artifacts.annotation.exported_images || [])"></div>
+              </div>
+            </div>
+            <div style="margin-top:16px" x-show="(artifacts.annotation.qa_frames || []).length">
+              <h3>QA 明细</h3>
+              <div class="table-wrap">
+                <table class="artifact-table">
+                  <thead><tr><th>Frame</th><th>状态</th><th>BBox</th><th>面积</th><th>Flags</th></tr></thead>
+                  <tbody>
+                    <template x-for="row in (artifacts.annotation.qa_frames || []).slice(0, 30)" :key="row.frame">
+                      <tr>
+                        <td class="mono" x-text="row.frame"></td>
+                        <td><span class="badge" :class="row.state === 'accepted' ? 'badge-completed' : row.state === 'rejected' ? 'badge-failed' : 'badge-running'" x-text="row.state"></span></td>
+                        <td class="mono" x-text="row.bbox_xyxy || '-'"></td>
+                        <td class="mono" x-text="row.area"></td>
+                        <td class="mono" x-text="(row.flags || []).join(', ') || '-'"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </template>
+        <template x-if="!artifacts.annotation">
+          <div class="empty-panel">还没有 annotation_dataset 输出。运行 Pipeline 后会显示 mask、QA 和 YOLO 数据集。</div>
+        </template>
+      </div>
     </div>
-    <div class="terminal" id="logOutput" x-ref="output">
-      <div class="log-system">连接到运行中的 Job 后显示实时日志。</div>
+  </template>
+
+  <template x-if="preset !== 'annotation_dataset'">
+    <div class="section">
+      <h3>Pose6D 结果</h3>
+      <div class="card">
+        <template x-if="artifacts.pose6d">
+          <div>
+            <div class="metrics-row">
+              <div class="metric"><strong x-text="artifacts.pose6d.package_rgb?.length || 0"></strong><span>打包 RGB</span></div>
+              <div class="metric"><strong x-text="artifacts.pose6d.package_masks?.length || 0"></strong><span>打包 Mask</span></div>
+              <div class="metric"><strong x-text="artifacts.pose6d.pose_files?.length || 0"></strong><span>位姿文件</span></div>
+              <div class="metric"><strong x-text="artifacts.pose6d.detection_dataset?.count ?? '-'"></strong><span>检测样本</span></div>
+            </div>
+            <div class="btn-group mb-16">
+              <template x-if="artifacts.pose6d.dataset_yaml">
+                <a class="btn btn-secondary btn-sm" :href="artifacts.pose6d.dataset_yaml.url" target="_blank">查看检测 dataset.yaml</a>
+              </template>
+            </div>
+            <div class="split-2">
+              <div>
+                <h3>打包 RGB</h3>
+                <div x-html="previewGrid(artifacts.pose6d.package_rgb || [])"></div>
+              </div>
+              <div>
+                <h3>打包 Mask</h3>
+                <div x-html="previewGrid(artifacts.pose6d.package_masks || [])"></div>
+              </div>
+            </div>
+            <div style="margin-top:16px" x-show="(artifacts.pose6d.fp_visuals || []).length">
+              <h3>位姿输出预览</h3>
+              <div x-html="previewGrid(artifacts.pose6d.fp_visuals || [])"></div>
+            </div>
+            <div style="margin-top:16px" x-show="(artifacts.pose6d.pose_files || []).length">
+              <h3>位姿文件</h3>
+              <div class="btn-group">
+                <template x-for="file in artifacts.pose6d.pose_files" :key="file.path">
+                  <a class="btn btn-secondary btn-sm" :href="file.url" target="_blank" x-text="file.name"></a>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
+        <template x-if="!artifacts.pose6d">
+          <div class="empty-panel">还没有 pose6d 输出。运行 Pipeline 后会显示打包数据、位姿结果和检测数据集。</div>
+        </template>
+      </div>
+    </div>
+  </template>
+
+  <div class="section">
+    <h3>Job 历史</h3>
+    <div class="card">
+      <p class="text-sm text-dim mb-8">查看此 Task 的所有运行记录。</p>
+      <a href="/history?task={{ task_name }}" class="btn btn-secondary btn-sm">
+        查看 Job 历史 &rarr;
+      </a>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>实时日志</h3>
+    <div class="card" x-data="logTerminal()" x-init="init()">
+      <div class="terminal-header">
+        <span class="terminal-status" :class="wsState" x-text="wsLabel"></span>
+      </div>
+      <div class="terminal" id="logOutput" x-ref="output">
+        <div class="log-system">连接到运行中的 Job 后显示实时日志。</div>
+      </div>
     </div>
   </div>
 </div>
@@ -202,10 +363,34 @@
 
 {% block scripts %}
 <script>
-function taskActions() {
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
+function renderPreviewGrid(items) {
+  if (!items || !items.length) {
+    return '<div class="empty-panel">暂无可预览文件。</div>';
+  }
+  return `<div class="preview-grid">${items.map(item => `
+    <figure class="preview-tile">
+      <a href="${escapeHtml(item.url)}" target="_blank"><img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.name)}" loading="lazy"></a>
+      <figcaption title="${escapeHtml(item.path)}">${escapeHtml(item.label || item.name)}</figcaption>
+    </figure>
+  `).join('')}</div>`;
+}
+
+function taskPage() {
   return {
     taskName: '',
-    preset: {{ (stage_settings.preset if stage_settings else "pose6d") | tojson }},
+    preset: {{ (stage_settings.preset if stage_settings else pipeline) | tojson }},
+    pipeline: {{ pipeline | tojson }},
+    artifacts: {{ artifacts | tojson }},
     running: false,
     submitting: false,
     deleting: false,
@@ -216,12 +401,16 @@ function taskActions() {
     error: '',
     success: '',
     configOpen: true,
-    stages: {{ (stage_settings.stages if stage_settings else ["masks", "hunyuangen", "scale", "package", "foundationpose", "detection_dataset"]) | tojson }},
-    enabledStages: {{ (stage_settings.enabled if stage_settings else ["masks", "hunyuangen", "scale", "package", "foundationpose", "detection_dataset"]) | tojson }},
-    labels: {{ (stage_settings.labels if stage_settings else {"masks":"分割","hunyuangen":"三维生成","scale":"尺度标定","package":"打包","foundationpose":"FoundationPose","detection_dataset":"检测数据集"}) | tojson }},
+    stages: {{ (stage_settings.stages if stage_settings else []) | tojson }},
+    enabledStages: {{ (stage_settings.enabled if stage_settings else []) | tojson }},
+    labels: {{ (stage_settings.labels if stage_settings else {}) | tojson }},
     _pollTimer: null,
 
-    init(el) {
+    get pipelineLabel() {
+      return this.preset === 'annotation_dataset' ? 'Annotation Dataset' : 'Pose6D';
+    },
+
+    start(el) {
       this.taskName = el.dataset.taskName;
       const initialRunningJobId = el.dataset.runningJobId;
       if (initialRunningJobId) {
@@ -231,10 +420,15 @@ function taskActions() {
         this._startPolling();
       }
       this.loadStageSettings();
+      this.loadArtifacts();
     },
 
     stageLabel(stage) {
       return this.labels[stage] || stage;
+    },
+
+    previewGrid(items) {
+      return renderPreviewGrid(items);
     },
 
     statusLabel(status) {
@@ -260,7 +454,18 @@ function taskActions() {
           this.running = false;
           this.jobStatus = job.status;
           this._stopPolling();
+          await this.loadArtifacts();
         }
+      } catch(e) {}
+    },
+
+    async loadArtifacts() {
+      try {
+        const r = await fetch(`/api/tasks/${this.taskName}/artifacts`);
+        if (!r.ok) return;
+        const d = await r.json();
+        this.artifacts = d;
+        this.pipeline = d.pipeline || this.pipeline;
       } catch(e) {}
     },
 
@@ -276,8 +481,18 @@ function taskActions() {
       } catch(e) {}
     },
 
-    loadDefaultStages() {
-      this.enableAllStages();
+    async loadDefaultStages() {
+      this.error = '';
+      try {
+        const r = await fetch(`/api/tasks/${this.taskName}/stage-settings?preset=${encodeURIComponent(this.preset)}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '加载 Pipeline 配置失败');
+        this.stages = d.stages || [];
+        this.enabledStages = d.enabled || [];
+        this.labels = d.labels || this.labels;
+      } catch(e) {
+        this.error = e.message;
+      }
     },
 
     enableAllStages() {
@@ -304,6 +519,7 @@ function taskActions() {
         this.stages = d.stages;
         this.enabledStages = d.enabled;
         this.labels = d.labels || this.labels;
+        this.preset = d.preset || this.preset;
         this.success = 'Pipeline 配置已保存';
       } catch(e) {
         this.error = e.message;
@@ -365,6 +581,7 @@ function taskActions() {
         this.currentJobId = '';
         this.jobStatus = '';
         this._stopPolling();
+        await this.loadArtifacts();
       } catch(e) {
         this.error = e.message;
       } finally {
