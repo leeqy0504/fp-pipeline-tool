@@ -1,6 +1,6 @@
 """Annotation dataset stages: QA, review pack, and YOLO export."""
 
-import base64
+import html
 import json
 import shutil
 import struct
@@ -218,12 +218,6 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _image_data_uri(path: Path) -> str:
-    mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{encoded}"
-
-
 def _yolo_line(class_id: int, box: list[int], width: int, height: int) -> str:
     x1, y1, x2, y2 = box
     cx = ((x1 + x2) / 2) / width
@@ -231,6 +225,76 @@ def _yolo_line(class_id: int, box: list[int], width: int, height: int) -> str:
     bw = (x2 - x1) / width
     bh = (y2 - y1) / height
     return f"{class_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n"
+
+
+def _relpath(from_dir: Path, target: Path) -> str:
+    import os
+
+    return os.path.relpath(target.resolve(), from_dir.resolve()).replace("\\", "/")
+
+
+def _state_from_review(row: dict, review_frames: dict) -> str:
+    return review_frames.get(row["frame"], {}).get("state", row["state"])
+
+
+def _draw_box_svg(
+    image_rel: str,
+    output_path: Path,
+    box: list[int],
+    width: int,
+    height: int,
+    label: str,
+    state: str = "accepted",
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    x1, y1, x2, y2 = [int(v) for v in box]
+    color = {
+        "accepted": "#00d4aa",
+        "suspect": "#f0a030",
+        "rejected": "#ff4d5a",
+    }.get(state, "#00d4aa")
+    stroke_width = max(2, int(max(width, height) / 320))
+    text = html.escape(label)
+    image_rel = html.escape(image_rel, quote=True)
+    output_path.write_text(f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}">
+  <image href="{image_rel}" x="0" y="0" width="{width}" height="{height}" preserveAspectRatio="xMidYMid meet"/>
+  <rect x="{x1}" y="{y1}" width="{max(1, x2 - x1)}" height="{max(1, y2 - y1)}" fill="none" stroke="{color}" stroke-width="{stroke_width}"/>
+  <rect x="{x1}" y="{max(0, y1 - 18)}" width="{max(80, len(text) * 7 + 12)}" height="18" fill="{color}"/>
+  <text x="{x1 + 4}" y="{max(12, y1 - 5)}" fill="#ffffff" font-size="12" font-family="monospace">{text}</text>
+</svg>
+""", encoding="utf-8")
+
+
+def _write_contact_sheet_svg(items: list[dict], output_path: Path, columns: int = 5, thumb_width: int = 220) -> None:
+    if not items:
+        return
+    rows = (len(items) + columns - 1) // columns
+    thumb_height = int(thumb_width * 0.75)
+    width = columns * thumb_width
+    height = rows * (thumb_height + 28)
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="#07070c"/>',
+    ]
+    for idx, item in enumerate(items):
+        col = idx % columns
+        row = idx // columns
+        x = col * thumb_width
+        y = row * (thumb_height + 28)
+        color = {
+            "accepted": "#00d4aa",
+            "suspect": "#f0a030",
+            "rejected": "#ff4d5a",
+        }.get(item.get("state"), "#8888a0")
+        href = html.escape(item["preview_rel"], quote=True)
+        frame = html.escape(item["frame"])
+        state = html.escape(item.get("state", ""))
+        parts.append(f'<a href="{href}"><image href="{href}" x="{x}" y="{y}" width="{thumb_width}" height="{thumb_height}" preserveAspectRatio="xMidYMid meet"/></a>')
+        parts.append(f'<rect x="{x}" y="{y}" width="{thumb_width}" height="{thumb_height}" fill="none" stroke="{color}" stroke-width="2"/>')
+        parts.append(f'<text x="{x + 6}" y="{y + thumb_height + 18}" fill="{color}" font-size="12" font-family="monospace">{frame} {state}</text>')
+    parts.append("</svg>")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(parts), encoding="utf-8")
 
 
 @register_stage("mask_qa")
@@ -369,20 +433,25 @@ class ReviewPackStage(BaseStage):
         task_dir = Path(config.input.rgbd_dir)
         rgb_dir = task_dir / "rgb"
         masks_source = Path(report["source_masks"])
+        export_dir = output_dir.parent / "detection_dataset_export"
 
         items = []
         for row in report["frames"]:
             image_path = rgb_dir / row["frame"]
             mask_path = masks_source / row["frame"]
+            export_image = export_dir / "images" / row["frame"]
+            export_mask = export_dir / "masks" / row["frame"]
+            export_preview = export_dir / "preview" / f"{Path(row['frame']).stem}.svg"
             item = {
                 **row,
                 "image": str(image_path) if image_path.exists() else None,
                 "mask": str(mask_path) if mask_path.exists() else None,
+                "image_rel": _relpath(output_dir, export_image) if row.get("bbox_xyxy") else (_relpath(output_dir, image_path) if image_path.exists() else None),
+                "mask_rel": _relpath(output_dir, export_mask) if row.get("bbox_xyxy") else (_relpath(output_dir, mask_path) if mask_path.exists() else None),
+                "preview_rel": _relpath(output_dir, export_preview) if row.get("bbox_xyxy") else None,
+                "image_fallback_rel": _relpath(output_dir, image_path) if image_path.exists() else None,
+                "mask_fallback_rel": _relpath(output_dir, mask_path) if mask_path.exists() else None,
             }
-            if image_path.exists():
-                item["image_data_uri"] = _image_data_uri(image_path)
-            if mask_path.exists():
-                item["mask_data_uri"] = _image_data_uri(mask_path)
             items.append(item)
 
         html = _render_review_html(config.task, report["summary"], items)
@@ -392,10 +461,7 @@ class ReviewPackStage(BaseStage):
             "qa_report": str(report_path),
             "review_status": str(_review_status_path(mask_qa_dir)),
             "summary": report["summary"],
-            "items": [
-                {k: v for k, v in item.items() if not k.endswith("_data_uri")}
-                for item in items
-            ],
+            "items": items,
         })
         return output_dir
 
@@ -404,18 +470,25 @@ def _render_review_html(task: str, summary: dict, items: list[dict]) -> str:
     cards = []
     for item in items:
         flags = ", ".join(item.get("flags") or []) or "-"
-        image = item.get("image_data_uri")
-        mask = item.get("mask_data_uri")
-        image_html = f'<img src="{image}" alt="{item["frame"]} RGB">' if image else '<div class="missing">No image</div>'
-        mask_html = f'<img src="{mask}" alt="{item["frame"]} mask">' if mask else '<div class="missing">No mask</div>'
+        image = html.escape(item.get("image_rel") or "", quote=True)
+        mask = html.escape(item.get("mask_rel") or "", quote=True)
+        preview = html.escape(item.get("preview_rel") or "", quote=True)
+        image_fallback = html.escape(item.get("image_fallback_rel") or "", quote=True)
+        mask_fallback = html.escape(item.get("mask_fallback_rel") or "", quote=True)
+        frame = html.escape(item["frame"])
+        state = html.escape(item["state"])
+        hidden = ' data-default-hidden="1"' if item["state"] == "accepted" else ""
+        image_html = f'<img src="{image}" data-fallback="{image_fallback}" alt="{frame} RGB">' if image else '<div class="missing">No image</div>'
+        mask_html = f'<img src="{mask}" data-fallback="{mask_fallback}" alt="{frame} mask">' if mask else '<div class="missing">No mask</div>'
+        preview_html = f'<img src="{preview}" alt="{frame} YOLO box">' if preview else '<div class="missing">No preview</div>'
         cards.append(f"""
-        <article class="frame {item['state']}">
-          <header><strong>{item['frame']}</strong><span>{item['state']}</span></header>
-          <div class="pair">{image_html}{mask_html}</div>
+        <article class="frame {state}" data-frame="{frame}" data-state="{state}"{hidden}>
+          <header><strong>{frame}</strong><span>{state}</span></header>
+          <div class="pair">{image_html}{mask_html}{preview_html}</div>
           <dl>
-            <dt>bbox</dt><dd>{item.get('bbox_xyxy')}</dd>
-            <dt>area</dt><dd>{item.get('area')}</dd>
-            <dt>flags</dt><dd>{flags}</dd>
+            <dt>bbox</dt><dd>{html.escape(str(item.get('bbox_xyxy')))}</dd>
+            <dt>area</dt><dd>{html.escape(str(item.get('area')))}</dd>
+            <dt>reason</dt><dd>{html.escape(flags)}</dd>
           </dl>
         </article>
         """)
@@ -437,18 +510,51 @@ def _render_review_html(task: str, summary: dict, items: list[dict]) -> str:
     header span {{ color:#00d4aa; font-family:monospace; }}
     .suspect header span {{ color:#f0a030; }}
     .rejected header span {{ color:#ff4d5a; }}
-    .pair {{ display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:start; }}
+    .pair {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; align-items:start; }}
     img {{ width:100%; background:#050510; border:1px solid #1e1e33; object-fit:contain; }}
+    .missing {{ min-height:80px; display:grid; place-items:center; color:#5a5a72; border:1px dashed #1e1e33; }}
     dl {{ display:grid; grid-template-columns:52px 1fr; gap:4px 8px; color:#8888a0; font-family:monospace; font-size:11px; }}
     dt {{ color:#5a5a72; }}
+    .toolbar {{ display:flex; gap:8px; margin:12px 0 20px; }}
+    input {{ background:#050510; border:1px solid #1e1e33; color:#e4e4ec; padding:8px; border-radius:4px; }}
+    button {{ background:#111122; border:1px solid #1e1e33; color:#e4e4ec; padding:8px 10px; border-radius:4px; cursor:pointer; }}
+    .hidden {{ display:none; }}
   </style>
 </head>
 <body>
   <main>
     <h1>{task} review pack</h1>
     <p class="summary">total {summary.get('total', 0)} / accepted {summary.get('accepted', 0)} / suspect {summary.get('suspect', 0)} / rejected {summary.get('rejected', 0)}</p>
+    <div class="toolbar">
+      <input id="search" placeholder="搜索 frame，例如 00042">
+      <button onclick="setMode('issues')">仅异常</button>
+      <button onclick="setMode('all')">全部</button>
+    </div>
     <section class="grid">{''.join(cards)}</section>
   </main>
+  <script>
+    let mode = 'issues';
+    function applyFilter() {{
+      const q = document.getElementById('search').value.trim();
+      document.querySelectorAll('.frame').forEach(el => {{
+        const matchesSearch = !q || el.dataset.frame.includes(q);
+        const matchesMode = mode === 'all' || el.dataset.state !== 'accepted';
+        el.classList.toggle('hidden', !(matchesSearch && matchesMode));
+      }});
+    }}
+    function setMode(next) {{ mode = next; applyFilter(); }}
+    document.getElementById('search').addEventListener('input', applyFilter);
+    document.querySelectorAll('img[data-fallback]').forEach(img => {{
+      img.addEventListener('error', () => {{
+        const fallback = img.dataset.fallback;
+        if (fallback && img.src !== fallback) {{
+          img.removeAttribute('data-fallback');
+          img.src = fallback;
+        }}
+      }}, {{ once: true }});
+    }});
+    applyFilter();
+  </script>
 </body>
 </html>
 """
@@ -474,12 +580,21 @@ class DetectionDatasetExportStage(BaseStage):
         images_out = output_dir / "images"
         labels_out = output_dir / "labels"
         masks_out = output_dir / "masks"
+        preview_out = output_dir / "preview"
+        contact_sheet_path = output_dir / "contact_sheet.svg"
+        for stale_dir in (images_out, labels_out, masks_out, preview_out):
+            if stale_dir.exists():
+                shutil.rmtree(stale_dir)
+        if contact_sheet_path.exists():
+            contact_sheet_path.unlink()
         images_out.mkdir(exist_ok=True)
         labels_out.mkdir(exist_ok=True)
         masks_out.mkdir(exist_ok=True)
+        preview_out.mkdir(exist_ok=True)
 
         annotations = []
         skipped = []
+        contact_items = []
         for row in report["frames"]:
             frame = row["frame"]
             review_state = review_frames.get(frame, {}).get("state", row["state"])
@@ -517,10 +632,26 @@ class DetectionDatasetExportStage(BaseStage):
                 ),
                 encoding="utf-8",
             )
+            preview_path = preview_out / f"{Path(frame).stem}.svg"
+            _draw_box_svg(
+                image_rel=_relpath(preview_path.parent, dst_image),
+                output_path=preview_path,
+                box=row["bbox_xyxy"],
+                width=int(row["width"]),
+                height=int(row["height"]),
+                label=f"{config.detection_dataset.class_name} {frame}",
+                state=review_state,
+            )
+            contact_items.append({
+                "frame": frame,
+                "state": review_state,
+                "preview_rel": _relpath(output_dir, preview_path),
+            })
             annotations.append({
                 "image": str(dst_image),
                 "mask": str(dst_mask),
                 "label": str(label_path),
+                "preview": str(preview_path),
                 "frame": frame,
                 "class_id": config.detection_dataset.class_id,
                 "class_name": config.detection_dataset.class_name,
@@ -530,9 +661,6 @@ class DetectionDatasetExportStage(BaseStage):
                 "flags": row.get("flags", []),
             })
 
-        if not annotations:
-            raise StageError("No accepted frames available for YOLO dataset export")
-
         dataset_yaml = (
             f"path: {output_dir.resolve()}\n"
             "train: images\n"
@@ -541,6 +669,7 @@ class DetectionDatasetExportStage(BaseStage):
             f"  {config.detection_dataset.class_id}: {config.detection_dataset.class_name}\n"
         )
         (output_dir / "dataset.yaml").write_text(dataset_yaml, encoding="utf-8")
+        _write_contact_sheet_svg(contact_items, contact_sheet_path)
         _write_json(output_dir / "annotations.json", {
             "task": config.task,
             "format": "yolo",
@@ -548,6 +677,7 @@ class DetectionDatasetExportStage(BaseStage):
             "class_id": config.detection_dataset.class_id,
             "class_name": config.detection_dataset.class_name,
             "count": len(annotations),
+            "contact_sheet": str(contact_sheet_path),
             "skipped": skipped,
             "annotations": annotations,
         })

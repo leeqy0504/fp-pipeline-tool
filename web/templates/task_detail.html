@@ -56,8 +56,21 @@
 .artifact-table td, .artifact-table th { vertical-align:top; }
 .split-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 .empty-panel { padding:16px; color:var(--text-muted); font-size:12px; border:1px dashed var(--border); border-radius:var(--radius); }
+.review-layout { display:grid; grid-template-columns:minmax(240px, 360px) 1fr; gap:16px; }
+.review-list { max-height:420px; overflow:auto; border:1px solid var(--border); border-radius:var(--radius); }
+.review-row {
+  display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center;
+  width:100%; padding:8px 10px; background:transparent; color:var(--text);
+  border:0; border-bottom:1px solid var(--border); text-align:left; cursor:pointer;
+}
+.review-row:hover, .review-row.active { background:var(--accent-dim); }
+.review-detail-media { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin:12px 0; }
+.review-detail-media img { width:100%; aspect-ratio:4/3; object-fit:contain; background:#050510; border:1px solid var(--border); border-radius:var(--radius); }
+.contact-sheet img { width:100%; max-height:520px; object-fit:contain; background:#050510; border:1px solid var(--border); border-radius:var(--radius); }
 @media (max-width: 760px) {
   .split-2 { grid-template-columns:1fr; }
+  .review-layout { grid-template-columns:1fr; }
+  .review-detail-media { grid-template-columns:1fr; }
   .stage-row { grid-template-columns:18px 1fr; }
   .stage-row .badge, .stage-row .stage-dur { grid-column:2; }
 }
@@ -122,8 +135,8 @@
       <div class="btn-group mb-12">
         <button class="btn btn-primary"
                 @click="runJob()"
-                :disabled="running || submitting || deleting || cloning">
-          <span x-text="submitting ? '提交中...' : '运行 Pipeline'"></span>
+                :disabled="running || submitting || deleting || cloning || loadingStages || stagesPreset !== preset">
+          <span x-text="submitting ? '提交中...' : loadingStages ? '加载步骤...' : '运行 Pipeline'"></span>
         </button>
         <button class="btn btn-danger"
                 @click="stopJob()"
@@ -247,27 +260,99 @@
               <template x-if="artifacts.annotation.review_pack">
                 <a class="btn btn-secondary btn-sm" :href="artifacts.annotation.review_pack.url" target="_blank">打开预览包</a>
               </template>
+              <template x-if="artifacts.annotation.contact_sheet">
+                <a class="btn btn-secondary btn-sm" :href="artifacts.annotation.contact_sheet.url" target="_blank">打开 Contact Sheet</a>
+              </template>
               <template x-if="artifacts.annotation.dataset_yaml">
                 <a class="btn btn-secondary btn-sm" :href="artifacts.annotation.dataset_yaml.url" target="_blank">查看 dataset.yaml</a>
               </template>
+              <button class="btn btn-secondary btn-sm" @click="applyReview()" :disabled="reviewSaving">
+                <span x-text="reviewSaving ? '同步中...' : '应用 Review 到数据集'"></span>
+              </button>
             </div>
-            <div class="split-2">
+
+            <template x-if="artifacts.annotation.contact_sheet">
+              <div class="contact-sheet mb-16">
+                <h3>Contact Sheet</h3>
+                <a :href="artifacts.annotation.contact_sheet.url" target="_blank">
+                  <img :src="artifacts.annotation.contact_sheet.url" alt="Contact Sheet">
+                </a>
+              </div>
+            </template>
+
+            <div class="review-layout">
               <div>
-                <h3>传播 Mask</h3>
-                <div x-html="previewGrid(artifacts.annotation.propagated_masks || [])"></div>
+                <div class="form-group">
+                  <label>搜索 Frame</label>
+                  <input class="input" x-model="reviewQuery" placeholder="00042">
+                </div>
+                <div class="btn-group mb-12">
+                  <button class="btn btn-secondary btn-sm" @click="reviewFilter = 'issues'">仅异常</button>
+                  <button class="btn btn-secondary btn-sm" @click="reviewFilter = 'all'">全部</button>
+                  <button class="btn btn-secondary btn-sm" @click="reviewFilter = 'exported'">已导出</button>
+                </div>
+                <div class="review-list">
+                  <template x-for="frame in filteredReviewFrames()" :key="frame.frame">
+                    <button class="review-row"
+                            :class="selectedFrame && selectedFrame.frame === frame.frame ? 'active' : ''"
+                            @click="selectedFrame = frame">
+                      <span class="mono" x-text="frame.frame"></span>
+                      <span class="badge"
+                            :class="frame.state === 'accepted' ? 'badge-completed' : frame.state === 'rejected' ? 'badge-failed' : 'badge-running'"
+                            x-text="frame.state"></span>
+                    </button>
+                  </template>
+                </div>
               </div>
               <div>
-                <h3>导出图片</h3>
-                <div x-html="previewGrid(artifacts.annotation.exported_images || [])"></div>
+                <template x-if="selectedFrame">
+                  <div>
+                    <div class="flex justify-between items-center mb-12">
+                      <div>
+                        <h3 x-text="selectedFrame.frame"></h3>
+                        <p class="text-muted text-sm" x-text="'reason: ' + ((selectedFrame.reason || []).join(', ') || '-')"></p>
+                      </div>
+                      <span class="badge"
+                            :class="selectedFrame.exported ? 'badge-completed' : 'badge-idle'"
+                            x-text="selectedFrame.exported ? '已导出' : '未导出'"></span>
+                    </div>
+                    <div class="review-detail-media">
+                      <template x-if="selectedFrame.image">
+                        <a :href="selectedFrame.image.url" target="_blank"><img :src="selectedFrame.image.url" alt="RGB"></a>
+                      </template>
+                      <template x-if="selectedFrame.mask">
+                        <a :href="selectedFrame.mask.url" target="_blank"><img :src="selectedFrame.mask.url" alt="Mask"></a>
+                      </template>
+                      <template x-if="selectedFrame.preview">
+                        <a :href="selectedFrame.preview.url" target="_blank"><img :src="selectedFrame.preview.url" alt="YOLO Box"></a>
+                      </template>
+                    </div>
+                    <div class="btn-group">
+                      <button class="btn btn-secondary btn-sm"
+                              @click="setReviewState(selectedFrame.frame, 'accepted')"
+                              :disabled="reviewSaving">标记 Accepted</button>
+                      <button class="btn btn-danger btn-sm"
+                              @click="setReviewState(selectedFrame.frame, 'rejected')"
+                              :disabled="reviewSaving">标记 Rejected</button>
+                      <button class="btn btn-secondary btn-sm"
+                              @click="setReviewState(selectedFrame.frame, 'suspect')"
+                              :disabled="reviewSaving">标记 Suspect</button>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="!selectedFrame">
+                  <div class="empty-panel">选择一帧查看 RGB、Mask 和 YOLO Box 预览。</div>
+                </template>
               </div>
             </div>
+
             <div style="margin-top:16px" x-show="(artifacts.annotation.qa_frames || []).length">
-              <h3>QA 明细</h3>
+              <h3>QA 异常明细</h3>
               <div class="table-wrap">
                 <table class="artifact-table">
-                  <thead><tr><th>Frame</th><th>状态</th><th>BBox</th><th>面积</th><th>Flags</th></tr></thead>
+                  <thead><tr><th>Frame</th><th>状态</th><th>BBox</th><th>面积</th><th>Reason</th></tr></thead>
                   <tbody>
-                    <template x-for="row in (artifacts.annotation.qa_frames || []).slice(0, 30)" :key="row.frame">
+                    <template x-for="row in (artifacts.annotation.qa_frames || [])" :key="row.frame">
                       <tr>
                         <td class="mono" x-text="row.frame"></td>
                         <td><span class="badge" :class="row.state === 'accepted' ? 'badge-completed' : row.state === 'rejected' ? 'badge-failed' : 'badge-running'" x-text="row.state"></span></td>
@@ -396,14 +481,20 @@ function taskPage() {
     deleting: false,
     cloning: false,
     savingSettings: false,
+    loadingStages: false,
     currentJobId: '',
     jobStatus: '',
     error: '',
     success: '',
     configOpen: true,
+    reviewQuery: '',
+    reviewFilter: 'issues',
+    selectedFrame: null,
+    reviewSaving: false,
     stages: {{ (stage_settings.stages if stage_settings else []) | tojson }},
     enabledStages: {{ (stage_settings.enabled if stage_settings else []) | tojson }},
     labels: {{ (stage_settings.labels if stage_settings else {}) | tojson }},
+    stagesPreset: {{ (stage_settings.preset if stage_settings else pipeline) | tojson }},
     _pollTimer: null,
 
     get pipelineLabel() {
@@ -421,6 +512,18 @@ function taskPage() {
       }
       this.loadStageSettings();
       this.loadArtifacts();
+    },
+
+    syncSelectedFrame(previousFrame) {
+      const frames = this.artifacts.annotation?.frames || [];
+      if (!frames.length) {
+        this.selectedFrame = null;
+        return;
+      }
+      const preferred = previousFrame
+        ? frames.find(f => f.frame === previousFrame)
+        : frames.find(f => f.state !== 'accepted') || frames[0];
+      this.selectedFrame = preferred || frames[0];
     },
 
     stageLabel(stage) {
@@ -464,9 +567,62 @@ function taskPage() {
         const r = await fetch(`/api/tasks/${this.taskName}/artifacts`);
         if (!r.ok) return;
         const d = await r.json();
+        const previousFrame = this.selectedFrame?.frame;
         this.artifacts = d;
         this.pipeline = d.pipeline || this.pipeline;
+        this.syncSelectedFrame(previousFrame);
       } catch(e) {}
+    },
+
+    filteredReviewFrames() {
+      const q = this.reviewQuery.trim();
+      let frames = this.artifacts.annotation?.frames || [];
+      if (this.reviewFilter === 'issues') {
+        frames = frames.filter(f => f.state !== 'accepted' || (f.reason || []).length);
+      } else if (this.reviewFilter === 'exported') {
+        frames = frames.filter(f => f.exported);
+      }
+      if (q) {
+        frames = frames.filter(f => f.frame.includes(q));
+      }
+      return frames;
+    },
+
+    async setReviewState(frame, state) {
+      this.reviewSaving = true; this.error = ''; this.success = '';
+      try {
+        const r = await fetch(`/api/tasks/${this.taskName}/review-frame`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({frame, state})
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '更新审核状态失败');
+        this.artifacts = d;
+        this.syncSelectedFrame(frame);
+        this.success = `已将 ${frame} 标记为 ${state}，并同步检测数据集`;
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.reviewSaving = false;
+      }
+    },
+
+    async applyReview() {
+      this.reviewSaving = true; this.error = ''; this.success = '';
+      try {
+        const r = await fetch(`/api/tasks/${this.taskName}/apply-review`, {method: 'POST'});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '同步 Review 失败');
+        const previousFrame = this.selectedFrame?.frame;
+        this.artifacts = d;
+        this.syncSelectedFrame(previousFrame);
+        this.success = 'Review 已同步到 detection dataset';
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.reviewSaving = false;
+      }
     },
 
     async loadStageSettings() {
@@ -474,15 +630,21 @@ function taskPage() {
         const r = await fetch(`/api/tasks/${this.taskName}/stage-settings`);
         if (!r.ok) return;
         const d = await r.json();
+        if (d.preset && d.preset !== this.preset) return;
         this.preset = d.preset || this.preset;
         this.stages = d.stages || this.stages;
         this.enabledStages = d.enabled || this.enabledStages;
         this.labels = d.labels || this.labels;
+        this.stagesPreset = d.preset || this.stagesPreset;
       } catch(e) {}
     },
 
     async loadDefaultStages() {
       this.error = '';
+      this.loadingStages = true;
+      this.stagesPreset = '';
+      this.stages = [];
+      this.enabledStages = [];
       try {
         const r = await fetch(`/api/tasks/${this.taskName}/stage-settings?preset=${encodeURIComponent(this.preset)}`);
         const d = await r.json();
@@ -490,8 +652,11 @@ function taskPage() {
         this.stages = d.stages || [];
         this.enabledStages = d.enabled || [];
         this.labels = d.labels || this.labels;
+        this.stagesPreset = d.preset || this.preset;
       } catch(e) {
         this.error = e.message;
+      } finally {
+        this.loadingStages = false;
       }
     },
 
@@ -520,6 +685,7 @@ function taskPage() {
         this.enabledStages = d.enabled;
         this.labels = d.labels || this.labels;
         this.preset = d.preset || this.preset;
+        this.stagesPreset = d.preset || this.stagesPreset;
         this.success = 'Pipeline 配置已保存';
       } catch(e) {
         this.error = e.message;
@@ -531,6 +697,9 @@ function taskPage() {
     async runJob() {
       this.submitting = true; this.error = ''; this.success = '';
       try {
+        if (this.loadingStages || this.stagesPreset !== this.preset) {
+          throw new Error('Pipeline 步骤还在加载，请稍后再运行');
+        }
         await this.saveStageSettings();
         if (this.error) throw new Error(this.error);
         const r = await fetch(`/api/tasks/${this.taskName}/run`, {

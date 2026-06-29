@@ -17,11 +17,37 @@ if TYPE_CHECKING:
 class PipelineOrchestrator:
     """Runs presets by dispatching stages in order, tracking progress via manifest."""
 
-    def __init__(self, presets_path: str | None = None):
-        if presets_path is None:
-            presets_path = str(Path(__file__).parent / "presets.yaml")
-        with open(presets_path) as f:
-            self.presets = yaml.safe_load(f)
+    def __init__(self, presets_path: str | None = None,
+                 project_root: str | Path | None = None):
+        if presets_path is not None:
+            self.presets = self._load_presets_file(Path(presets_path))
+            return
+
+        if project_root is not None:
+            pipeline_dir = Path(project_root) / "configs" / "pipelines"
+            if pipeline_dir.exists():
+                presets = self._load_pipeline_dir(pipeline_dir)
+                if presets:
+                    self.presets = presets
+                    return
+
+        self.presets = self._load_presets_file(Path(__file__).parent / "presets.yaml")
+
+    @staticmethod
+    def _load_presets_file(path: Path) -> dict:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+
+    @staticmethod
+    def _load_pipeline_dir(path: Path) -> dict:
+        presets = {}
+        for config_path in sorted([*path.glob("*.yaml"), *path.glob("*.yml")]):
+            data = PipelineOrchestrator._load_presets_file(config_path)
+            preset = data.get("preset") or config_path.stem
+            presets[preset] = {
+                "stages": list(data.get("stages", [])),
+            }
+        return presets
 
     def resolve_preset(self, preset_name: str) -> list[str]:
         if preset_name not in self.presets:

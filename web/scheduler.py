@@ -173,7 +173,7 @@ class Scheduler:
             cfg_path = self._resolve_config_path(config_path)
             config = load_config(cfg_path, project_root=self.project_root)
             config.run_id = job.job_id
-            orch = PipelineOrchestrator()
+            orch = PipelineOrchestrator(project_root=self.project_root)
             if job.preset:
                 config.preset = job.preset
                 config.pipeline_stages = orch.resolve_preset(job.preset)

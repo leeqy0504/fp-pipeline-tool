@@ -83,12 +83,13 @@ def test_annotation_dataset_stages_export_yolo_from_masks(tmp_path):
     _write_box_png(masks_dir / "00000.png", 10, 10, (2, 2, 6, 6))
     _write_box_png(masks_dir / "00001.png", 10, 10, (3, 2, 7, 6))
 
-    qa_dir = tmp_path / "qa"
+    run_dir = tmp_path / "output" / "mouse01" / "runs" / "job1"
+    qa_dir = run_dir / "stages" / "mask_qa"
     qa_ctx = StageContext(
         run=RunContext(run_id="job1", task_name="mouse01"),
         data=DataContext(
             task_dir=task_dir,
-            run_dir=tmp_path / "output" / "mouse01" / "runs" / "job1",
+            run_dir=run_dir,
             output_dir=qa_dir,
             inputs={"sam2_video_propagation": video_dir},
         ),
@@ -101,22 +102,28 @@ def test_annotation_dataset_stages_export_yolo_from_masks(tmp_path):
     assert report["frames"][0]["bbox_xyxy"] == [2, 2, 6, 6]
     assert (qa_dir / "review_status.json").exists()
 
-    review_dir = tmp_path / "review"
+    review_dir = run_dir / "stages" / "review_pack"
     review_ctx = StageContext(
         run=RunContext(run_id="job1", task_name="mouse01"),
         data=DataContext(
             task_dir=task_dir,
-            run_dir=tmp_path / "output" / "mouse01" / "runs" / "job1",
+            run_dir=run_dir,
             output_dir=review_dir,
             inputs={"mask_qa": qa_dir},
         ),
         stage_name="review_pack",
     )
     ReviewPackStage().run(config, review_dir, context=review_ctx)
-    assert (review_dir / "index.html").exists()
+    review_html = (review_dir / "index.html").read_text()
+    assert "data:image" not in review_html
+    assert "source_masks" not in review_html
+    assert "../detection_dataset_export/images/00000.png" in review_html
+    assert "../detection_dataset_export/masks/00000.png" in review_html
+    assert "../detection_dataset_export/preview/00000.svg" in review_html
+    assert "data-fallback=" in review_html
     assert (review_dir / "review_pack.json").exists()
 
-    export_dir = tmp_path / "export"
+    export_dir = run_dir / "stages" / "detection_dataset_export"
     export_ctx = StageContext(
         run=RunContext(run_id="job1", task_name="mouse01"),
         data=DataContext(
@@ -131,7 +138,24 @@ def test_annotation_dataset_stages_export_yolo_from_masks(tmp_path):
 
     assert (export_dir / "images" / "00000.png").exists()
     assert (export_dir / "masks" / "00000.png").exists()
+    assert (export_dir / "preview" / "00000.svg").exists()
+    assert (export_dir / "contact_sheet.svg").exists()
     assert (export_dir / "labels" / "00000.txt").read_text().startswith("0 ")
     annotations = json.loads((export_dir / "annotations.json").read_text())
     assert annotations["count"] == 2
+    assert annotations["contact_sheet"] == str(export_dir / "contact_sheet.svg")
     assert annotations["annotations"][0]["bbox_xyxy"] == [2, 2, 6, 6]
+
+    review_status = json.loads((qa_dir / "review_status.json").read_text())
+    review_status["frames"]["00001.png"]["state"] = "rejected"
+    review_status["frames"]["00001.png"]["manual"] = True
+    (qa_dir / "review_status.json").write_text(json.dumps(review_status))
+
+    DetectionDatasetExportStage().run(config, export_dir, context=export_ctx)
+
+    assert (export_dir / "images" / "00000.png").exists()
+    assert not (export_dir / "images" / "00001.png").exists()
+    assert not (export_dir / "labels" / "00001.txt").exists()
+    annotations = json.loads((export_dir / "annotations.json").read_text())
+    assert annotations["count"] == 1
+    assert annotations["skipped"] == [{"image": "00001.png", "reason": "rejected"}]

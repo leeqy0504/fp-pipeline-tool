@@ -30,6 +30,11 @@ class CloneRequest(BaseModel):
     task_name: str | None = None
 
 
+class ReviewStateRequest(BaseModel):
+    frame: str
+    state: str
+
+
 def _tasks_dir(request: Request) -> Path:
     return _project_root(request) / "tasks"
 
@@ -196,8 +201,114 @@ def _stage_dir(manifest: dict | None, stage_name: str) -> Path | None:
     return Path(output) if output else None
 
 
+def _latest_run_dir(manifest: dict | None) -> Path | None:
+    if not manifest:
+        return None
+    run_dir = (manifest.get("metadata") or {}).get("run_dir")
+    return Path(run_dir) if run_dir else None
+
+
 def _sample_files(paths: list[Path], limit: int = 24) -> list[Path]:
     return sorted(paths)[:limit]
+
+
+def _review_status_path(qa_dir: Path) -> Path:
+    return qa_dir / "review_status.json"
+
+
+def _load_review_status(qa_dir: Path | None) -> dict:
+    if not qa_dir:
+        return {}
+    path = _review_status_path(qa_dir)
+    if not path.exists():
+        return {}
+    return _safe_json(path) or {}
+
+
+def _save_review_status(qa_dir: Path, data: dict) -> None:
+    path = _review_status_path(qa_dir)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _annotation_frame_items(project_root: Path, task_dir: Path, qa_report: dict | None,
+                            review_status: dict, export_dir: Path | None) -> list[dict]:
+    if not qa_report:
+        return []
+    frames = review_status.get("frames", {})
+    rgb_dir = task_dir / "rgb"
+    masks_dir = Path(qa_report["source_masks"])
+    annotations_by_frame = {}
+    annotations = _safe_json(export_dir / "annotations.json") if export_dir else None
+    for ann in (annotations or {}).get("annotations", []):
+        annotations_by_frame[ann.get("frame")] = ann
+
+    items = []
+    for row in qa_report.get("frames", []):
+        frame = row["frame"]
+        review_info = frames.get(frame, {})
+        state = review_info.get("state", row.get("state", "accepted"))
+        image_path = rgb_dir / frame
+        mask_path = masks_dir / frame
+        preview_path = export_dir / "preview" / f"{Path(frame).stem}.svg" if export_dir else None
+        ann = annotations_by_frame.get(frame)
+        items.append({
+            "frame": frame,
+            "state": state,
+            "qa_state": row.get("state"),
+            "manual": bool(review_info.get("manual")),
+            "reason": row.get("flags", []),
+            "bbox_xyxy": row.get("bbox_xyxy"),
+            "area": row.get("area"),
+            "image": _file_item(project_root, image_path) if image_path.exists() else None,
+            "mask": _file_item(project_root, mask_path) if mask_path.exists() else None,
+            "preview": _file_item(project_root, preview_path) if preview_path and preview_path.exists() else None,
+            "exported": ann is not None,
+        })
+    return items
+
+
+def _rebuild_detection_dataset_from_review(project_root: Path, task_name: str) -> dict:
+    from pipeline.config import load_config
+    from pipeline.stages.annotation_dataset import DetectionDatasetExportStage
+    from pipeline.stages.context import DataContext, RunContext, StageContext
+
+    task_dir = project_root / "tasks" / task_name
+    manifest = _load_latest_manifest(project_root / "output", task_name)
+    qa_dir = _stage_dir(manifest, "mask_qa")
+    export_dir = _stage_dir(manifest, "detection_dataset_export")
+    if not qa_dir:
+        raise HTTPException(400, "mask_qa output not found")
+    if not export_dir:
+        run_dir = _latest_run_dir(manifest)
+        if not run_dir:
+            raise HTTPException(400, "run_dir not found")
+        export_dir = run_dir / "stages" / "detection_dataset_export"
+
+    config_path = _task_yaml_path(task_dir)
+    if not config_path.exists():
+        raise HTTPException(400, "task.yaml not found")
+    config = load_config(str(config_path), project_root=project_root)
+    if manifest:
+        config.run_id = manifest.get("run_id")
+    if not Path(config.input.rgbd_dir).is_absolute():
+        config.input.rgbd_dir = str(project_root / config.input.rgbd_dir)
+    if not Path(config.input.multi_views_dir).is_absolute():
+        config.input.multi_views_dir = str(project_root / config.input.multi_views_dir)
+    if not Path(config.output_dir).is_absolute():
+        config.output_dir = str(project_root / config.output_dir)
+
+    context = StageContext(
+        run=RunContext(run_id=config.run_id, task_name=task_name),
+        data=DataContext(
+            task_dir=Path(config.input.rgbd_dir),
+            run_dir=_latest_run_dir(manifest) or export_dir.parent.parent,
+            output_dir=export_dir,
+            inputs={"mask_qa": qa_dir},
+        ),
+        stage_name="detection_dataset_export",
+    )
+    DetectionDatasetExportStage().run(config, export_dir, context=context)
+    return _build_task_artifacts(project_root, task_name)
 
 
 def _build_task_artifacts(project_root: Path, task_name: str) -> dict:
@@ -206,7 +317,7 @@ def _build_task_artifacts(project_root: Path, task_name: str) -> dict:
     manifest = _load_latest_manifest(output_dir, task_name)
     pipeline = _task_pipeline(task_dir)
 
-    rgb_files = _sample_files(list((task_dir / "rgb").glob("*.png")) + list((task_dir / "rgb").glob("*.jpg")), 30)
+    rgb_files = _sample_files(list((task_dir / "rgb").glob("*.png")) + list((task_dir / "rgb").glob("*.jpg")), 7)
     depth_files = _sample_files(list((task_dir / "depth").glob("*.png")), 12)
     view_files = _sample_files(
         list((task_dir / "views").glob("*.png"))
@@ -236,16 +347,24 @@ def _build_task_artifacts(project_root: Path, task_name: str) -> dict:
         export_dir = _stage_dir(manifest, "detection_dataset_export")
 
         qa_report = _safe_json(qa_dir / "qa_report.json") if qa_dir else None
+        review_status = _load_review_status(qa_dir)
         annotations = _safe_json(export_dir / "annotations.json") if export_dir else None
         masks_dir = video_dir / "masks" if video_dir else None
-        mask_files = _sample_files(list(masks_dir.glob("*.png")) if masks_dir and masks_dir.exists() else [], 30)
-        exported_images = _sample_files(list((export_dir / "images").glob("*.png")) if export_dir else [], 30)
+        mask_files = _sample_files(list(masks_dir.glob("*.png")) if masks_dir and masks_dir.exists() else [], 12)
+        exported_images = _sample_files(list((export_dir / "images").glob("*.png")) if export_dir else [], 12)
         exported_labels = sorted((export_dir / "labels").glob("*.txt"))[:30] if export_dir and (export_dir / "labels").exists() else []
+        contact_sheet = export_dir / "contact_sheet.svg" if export_dir else None
         artifacts["annotation"] = {
             "prompt_masks": [_file_item(project_root, p) for p in _sample_files(list(prompt_dir.glob("*.png")) if prompt_dir else [], 6)],
             "propagated_masks": [_file_item(project_root, p) for p in mask_files],
             "qa_summary": (qa_report or {}).get("summary"),
-            "qa_frames": (qa_report or {}).get("frames", [])[:80],
+            "qa_frames": [
+                row for row in (qa_report or {}).get("frames", [])
+                if row.get("state") != "accepted"
+            ][:120],
+            "review_status": review_status,
+            "frames": _annotation_frame_items(project_root, task_dir, qa_report, review_status, export_dir),
+            "contact_sheet": _file_item(project_root, contact_sheet, "contact_sheet.svg") if contact_sheet and contact_sheet.exists() else None,
             "review_pack": _file_item(project_root, review_dir / "index.html", "review_pack.html") if review_dir and (review_dir / "index.html").exists() else None,
             "dataset_yaml": _file_item(project_root, export_dir / "dataset.yaml", "dataset.yaml") if export_dir and (export_dir / "dataset.yaml").exists() else None,
             "annotations": (annotations or {}),
@@ -322,11 +441,31 @@ def _resolve_stage_settings(preset: str, enabled: list[str], stages: list[str] |
     }
 
 
+def _resolve_run_stage_settings(project_root: Path, preset: str, selection: dict | None) -> dict | None:
+    """Normalize run-time stage selection for a preset.
+
+    The top-level run preset is authoritative. Older saved settings or stale
+    browser state may carry a different ``selection.preset``; using that value
+    can silently run the wrong pipeline from the task detail page.
+    """
+    if not selection:
+        return None
+    from pipeline.pipeline import PipelineOrchestrator
+
+    stages = PipelineOrchestrator(project_root=project_root).resolve_preset(preset)
+    if "enabled" in selection and selection.get("enabled") is not None:
+        return _resolve_stage_settings(preset, selection.get("enabled", []), stages=stages)
+
+    skipped = set(selection.get("skipped", []))
+    enabled = [stage for stage in stages if stage not in skipped]
+    return _resolve_stage_settings(preset, enabled, stages=stages)
+
+
 def _default_stage_settings(task_path: Path) -> dict:
     from pipeline.pipeline import PipelineOrchestrator
 
     preset = _task_pipeline(task_path)
-    stages = PipelineOrchestrator().resolve_preset(preset)
+    stages = PipelineOrchestrator(project_root=task_path.parent.parent).resolve_preset(preset)
     return _resolve_stage_settings(preset, stages)
 
 
@@ -510,6 +649,47 @@ async def get_task_artifacts(task_name: str, request: Request):
     return _build_task_artifacts(_project_root(request), task_name)
 
 
+@router.post("/tasks/{task_name}/review-frame")
+async def update_review_frame(task_name: str, body: ReviewStateRequest, request: Request):
+    task_path = _tasks_dir(request) / task_name
+    if not task_path.is_dir():
+        raise HTTPException(404, f"Task '{task_name}' not found")
+    if body.state not in {"accepted", "rejected", "suspect"}:
+        raise HTTPException(400, "state must be accepted, rejected, or suspect")
+    if "/" in body.frame or "\\" in body.frame or ".." in body.frame:
+        raise HTTPException(400, "invalid frame")
+
+    project_root = _project_root(request)
+    manifest = _load_latest_manifest(project_root / "output", task_name)
+    qa_dir = _stage_dir(manifest, "mask_qa")
+    if not qa_dir:
+        raise HTTPException(400, "mask_qa output not found")
+    report = _safe_json(qa_dir / "qa_report.json")
+    if not report:
+        raise HTTPException(400, "qa_report.json not found")
+    rows = {row["frame"]: row for row in report.get("frames", [])}
+    if body.frame not in rows:
+        raise HTTPException(404, f"Frame '{body.frame}' not found in QA report")
+
+    review = _load_review_status(qa_dir) or {"task": task_name, "source": "mask_qa", "frames": {}}
+    review.setdefault("frames", {})
+    review["frames"][body.frame] = {
+        "state": body.state,
+        "flags": rows[body.frame].get("flags", []),
+        "manual": True,
+    }
+    _save_review_status(qa_dir, review)
+    return _rebuild_detection_dataset_from_review(project_root, task_name)
+
+
+@router.post("/tasks/{task_name}/apply-review")
+async def apply_review(task_name: str, request: Request):
+    task_path = _tasks_dir(request) / task_name
+    if not task_path.is_dir():
+        raise HTTPException(404, f"Task '{task_name}' not found")
+    return _rebuild_detection_dataset_from_review(_project_root(request), task_name)
+
+
 @router.get("/tasks/{task_name}/stage-settings")
 async def get_stage_settings(task_name: str, request: Request, preset: str | None = None):
     task_path = _tasks_dir(request) / task_name
@@ -517,14 +697,14 @@ async def get_stage_settings(task_name: str, request: Request, preset: str | Non
         raise HTTPException(404, f"Task '{task_name}' not found")
     if preset:
         from pipeline.pipeline import PipelineOrchestrator
-        stages = PipelineOrchestrator().resolve_preset(preset)
+        stages = PipelineOrchestrator(project_root=_project_root(request)).resolve_preset(preset)
         return _resolve_stage_settings(preset, stages)
     saved = _load_stage_settings(task_path)
     if saved:
         return saved
     from pipeline.pipeline import PipelineOrchestrator
     task_preset = _task_pipeline(task_path)
-    stages = PipelineOrchestrator().resolve_preset(task_preset)
+    stages = PipelineOrchestrator(project_root=_project_root(request)).resolve_preset(task_preset)
     return _resolve_stage_settings(task_preset, stages)
 
 
@@ -533,7 +713,9 @@ async def save_stage_settings(task_name: str, body: StageSettingsRequest, reques
     task_path = _tasks_dir(request) / task_name
     if not task_path.is_dir():
         raise HTTPException(404, f"Task '{task_name}' not found")
-    settings = _resolve_stage_settings(body.preset, body.enabled)
+    from pipeline.pipeline import PipelineOrchestrator
+    stages = PipelineOrchestrator(project_root=_project_root(request)).resolve_preset(body.preset)
+    settings = _resolve_stage_settings(body.preset, body.enabled, stages=stages)
     _settings_path(task_path).write_text(
         json.dumps(settings, indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -560,14 +742,15 @@ async def run_task(task_name: str, body: RunRequest, request: Request):
             local_config = _task_config_path(task_path)
         if config_path is None and local_config.exists():
             config_path = str(local_config)
-        stage_selection = body.stage_selection or _load_stage_settings(task_path)
         run_preset = body.preset
-        if stage_selection:
-            run_preset = stage_selection.get("preset", body.preset)
-            stage_selection = _resolve_stage_settings(
-                run_preset,
-                stage_selection.get("enabled", []),
-            )
+        if body.stage_selection is not None:
+            stage_selection = _resolve_run_stage_settings(_project_root(request), run_preset, body.stage_selection)
+        else:
+            saved_selection = _load_stage_settings(task_path)
+            if saved_selection and saved_selection.get("preset", run_preset) == run_preset:
+                stage_selection = _resolve_run_stage_settings(_project_root(request), run_preset, saved_selection)
+            else:
+                stage_selection = None
         job_id = await scheduler.submit(
             task_name,
             run_preset,
